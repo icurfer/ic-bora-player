@@ -1,0 +1,5 @@
+# ic-praxis: the gate must run on Windows (Git Bash) too — a CRLF checkout
+# breaks every shell script ("\r: command not found"). Pin these to LF.
+*.sh text eol=lf
+.githooks/* text eol=lf
+version text eol=lf

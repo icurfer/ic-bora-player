@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# praxis pre-commit gate. Enable once: bash scripts/install-hooks.sh
+# Emergency bypass: git commit --no-verify
+exec "$(git rev-parse --show-toplevel)/scripts/check-conventions.sh"
