@@ -84,7 +84,7 @@
 | 하드웨어 디코딩 | 호스트 그대로 | ✅ **실측 확인** — Flatpak 안과 호스트가 동일(`Using hardware decoding (vulkan)`) |
 | 설치 | `pipx install` 또는 deb | `flatpak install` (22.04 는 flatpak 1.12 로 가능) |
 | **동명 자막 자동 로드** | ✅ **문제 없음** | ⚠ **`--filesystem=host:ro` 필수** — 포털만으로는 구조적으로 불가능(8-2). Flathub 심사에서 넓은 권한은 지적 대상이 될 수 있다 |
-| UI 툴킷 | ⚠ **libadwaita 1.1 / GTK 4.6 범위로 제한**된다 | ✅ 최신 API 하나만 쓰면 된다 |
+| UI 툴킷 | ⚠ **libadwaita 1.1 / GTK 4.6 범위로 제한**된다. **실측: `Gtk.GLArea` 는 있고, 없는 위젯(`ToolbarView`·`SpinRow`·`MessageDialog`·`FileDialog`)은 전부 대체재가 있다.** 기능 포기가 아니라 코드가 길어지는 대가 | ✅ 최신 API 하나만 쓰면 된다 |
 | libmpv 로딩 | ✅ `find_library` 가 jammy 에서도 정상(8-7) | 동봉하므로 무관 |
 | 개발 부담 | 3개 릴리스 × API 차이를 코드에서 흡수 | 빌드 매니페스트 작성. 코드는 최신 API 하나만 |
 | 선례 | — | Celluloid·Haruna 둘 다 Flathub 이 주 배포 채널 |

@@ -74,6 +74,30 @@ libmpv 로드/인스턴스 생성: OK,  mpv-version = mpv 0.34.1
   ⚠ **다만 컨테이너에는 GL 컨텍스트가 없어 "실제로 렌더되는지"는 검증하지 못했다.**
   0.5.2 와 1.0.8 의 인자 이름이 다를 가능성도 남아 있다. 22.04 실기·VM 에서 §1 스파이크를 그대로 돌려야 확정된다.
 
+## 2-1. A 안의 유일한 장벽을 실측했다 — libadwaita 1.1 / GTK 4.6 의 범위
+
+jammy 컨테이너에 `gir1.2-adw-1` 을 넣고 Bora UI(§5-3)에 필요한 위젯이 실제로 있는지 확인했다.
+`libadwaita 1.1.7 / GTK 4.6.9`:
+
+| | 목록 |
+|---|---|
+| **있다** | `Adw.ApplicationWindow` `HeaderBar` `ActionRow` `ComboRow` `PreferencesWindow` `StatusPage` `Toast` `ToastOverlay` `ButtonContent` `WindowTitle` `Flap` `Clamp` · **`Gtk.GLArea`** `Video` `MediaControls` `PopoverMenu` `DropDown` `Scale` `FileChooserNative` |
+| **없다** | `Adw.ToolbarView` `Dialog` `MessageDialog` `AboutWindow` `AboutDialog` `SpinRow` `PreferencesDialog` `Banner` `OverlaySplitView` · `Gtk.FileDialog`(4.10+) |
+
+**핵심인 `Gtk.GLArea` 가 있다.** 없는 것들은 전부 대체재가 있다:
+
+| v0.1 에 필요한 것 | 1.1 에서 쓸 것 |
+|---|---|
+| 파일 열기 | `Gtk.FileDialog` 대신 **`Gtk.FileChooserNative`** (구식이지만 포털도 잘 탄다) |
+| 자막 싱크 조절 | `Adw.SpinRow` 대신 **`Adw.ActionRow` + `Gtk.SpinButton`** |
+| 헤더바 + 하단 컨트롤 | `Adw.ToolbarView` 대신 **`Gtk.Box` 수직 배치** |
+| 알림·오류 | `Adw.MessageDialog` 대신 **`Gtk.MessageDialog`**(4.6 에 존재, 이후 deprecated) + `Adw.Toast` |
+| 자막 트랙 선택 | `Gtk.DropDown` 또는 `Gtk.PopoverMenu` — **둘 다 있다** |
+
+→ **A 안은 실현 가능하다.** 대가는 "UI 코드가 조금 길어지고 최신 GNOME 스타일과 미세하게 달라지는 것"이지
+기능 포기가 아니다. ⚠ 다만 이 목록은 **심볼 존재 여부**만 본 것이고, 실제 레이아웃·동작은 22.04 에서
+띄워 봐야 안다.
+
 ## 3. 배포 방식(§8-1)에 주는 영향 — 아직 결정하지 않았다
 
 기획서 §4 는 A안(시스템 패키지)의 불확실성으로 세 가지를 들었다. 그중 둘이 해소됐다.
