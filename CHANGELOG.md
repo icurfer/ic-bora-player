@@ -1,5 +1,8 @@
 # CHANGELOG
 
+- **0.1.4** (2026-09-13) — **26.04 우선 개발로 결정**, 22.04·24.04 대응과 배포 방식(8-1) 선택은 연기.
+  `scope-v0.1.0.md`(파일·함수 단위 구현 범위) + `deferred/backlog-v0.1.0.md` 작성.
+  UI 위젯은 libadwaita 1.1 범위를 기본으로 쓰는 규율을 채택 — 26.04 에서 비용이 0 이고 나중 이식 비용을 줄인다.
 - **0.1.3** (2026-09-13) — A 안의 유일한 장벽을 실측. jammy 의 libadwaita 1.1 / GTK 4.6 에
   **`Gtk.GLArea` 가 있고**, 없는 위젯(`ToolbarView`·`SpinRow`·`MessageDialog`·`FileDialog`)은 전부 대체재가 있다.
   → A 안은 실현 가능. 8-1 결정 재료가 모두 모였다.
