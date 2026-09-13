@@ -1,5 +1,9 @@
 # CHANGELOG
 
+- **0.3.0** (2026-09-14) — **기획서 §6 수용 테스트 T1~T4 통과.** scope §4 4~6단계 완료.
+  `subtitle/loader.py`(무엇을 할지 정하는 층) + Player 자막 API + 자막 UI(트랙 선택·싱크 조절·상태 표시).
+  CP949 SAMI 를 영상 옆에 두면 설정 없이 한글 자막이 나오고, 한·영 통합 SAMI 는 트랙 2개로 갈려
+  한국어가 기본 선택된다. 검증: `verify-app/scenarios/02-subtitle-acceptance.py`.
 - **0.2.1** (2026-09-13) — scope §4 2·3단계: 자막 판정(`subtitle/detect.py`)과 SAMI 분리(`subtitle/sami.py`)를
   프로토타입에서 승격, 테스트 26개로 고정.
   **Gate F 가 죽어 있던 것을 발견해 되살렸다** — grep 의 바이트 범위 패턴이 아무것도 매칭하지 않아

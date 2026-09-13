@@ -17,6 +17,7 @@ from typing import Callable
 
 import mpv
 
+from .subtitle.sami import Track
 from .util.gl import get_proc_address
 
 
@@ -74,8 +75,57 @@ class Player:
         self._ctx.render(flip_y=True, opengl_fbo={"w": width, "h": height, "fbo": fbo})
 
     # ── 재생 ─────────────────────────────────────────────────────────────
-    def open(self, path: Path | str) -> None:
+    def open(self, path: Path | str, plan=None) -> None:
+        """영상을 연다. plan 이 있으면 자막 설정을 함께 적용한다.
+
+        순서가 중요하다 — sub-codepage 와 sub-auto 는 파일을 열기 **전에** 정해야 하고,
+        분리 트랙 주입(sub-add)은 파일이 열린 **뒤**여야 한다.
+        """
+        if plan is None:
+            self._mpv.sub_auto = "fuzzy"
+            self._mpv.sub_codepage = "auto"
+            self._mpv.sub_stretch_durations = False
+        else:
+            # 분리 트랙을 쓸 때는 원본 자막이 자동으로 붙지 않게 막는다(중복 트랙 방지).
+            self._mpv.sub_auto = "no" if plan.split else "fuzzy"
+            self._mpv.sub_codepage = plan.codepage or "auto"
+            self._mpv.sub_stretch_durations = bool(plan.fallback_stretch)
+
         self._mpv.play(str(path))
+
+        if plan is not None and plan.tracks:
+            self._mpv.wait_until_playing(timeout=10)
+            for index, track in enumerate(plan.tracks):
+                # 첫 트랙(한국어가 앞에 오도록 정렬돼 있다)을 기본 선택한다.
+                self.add_sub(track, select=(index == 0))
+
+    def add_sub(self, track: Track, select: bool = False) -> None:
+        """분리한 자막 트랙을 주입한다. 제목·언어까지 넘겨야 트랙 메뉴에 제대로 보인다."""
+        self._mpv.sub_add(str(track.path), "select" if select else "auto", track.title, track.lang)
+
+    @property
+    def sub_tracks(self) -> list[dict]:
+        return [t for t in self._mpv.track_list if t.get("type") == "sub"]
+
+    @property
+    def sub_id(self):
+        return self._mpv.sid
+
+    @sub_id.setter
+    def sub_id(self, value) -> None:
+        self._mpv.sid = value
+
+    @property
+    def sub_delay(self) -> float:
+        return float(self._mpv.sub_delay or 0.0)
+
+    @sub_delay.setter
+    def sub_delay(self, value: float) -> None:
+        self._mpv.sub_delay = round(value, 3)
+
+    @property
+    def sub_text(self) -> str | None:
+        return self._mpv.sub_text
 
     def toggle_pause(self) -> None:
         self._mpv.pause = not self._mpv.pause

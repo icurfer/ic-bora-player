@@ -34,7 +34,7 @@ class BoraApplication(Adw.Application):
     def _open_in(window: BoraWindow, paths: list[Path]) -> None:
         if not paths:
             return
-        window.open_path(paths[0])
         # 인자가 둘 이상이면 두 번째는 자막으로 본다 (research 4 §4 — 포털이 영상과 자막을
         # 서로 다른 디렉터리에 노출하므로 sub-auto 로는 찾지 못한다).
-        # 자막 주입은 scope §4 의 5단계에서 붙인다.
+        subtitle = paths[1] if len(paths) > 1 else None
+        window.open_path(paths[0], subtitle)
