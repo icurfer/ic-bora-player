@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bora"
+description = "libmpv 를 엔진으로 쓰는 GTK 미디어 플레이어. 국내 자막(CP949·SAMI)을 제대로 다룬다."
+readme = "README.md"
+requires-python = ">=3.10"
+dynamic = ["version"]
+# 런타임 의존성은 배포판 패키지로 설치한다 (pip 로 받지 않는다):
+#   sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 python3-mpv libmpv2
+# PyGObject 와 python-mpv 는 시스템 GI/라이브러리와 묶여 있어 pip 판을 섞으면 깨진다.
+dependencies = []
+
+[project.scripts]
+bora = "bora.__main__:main"
+
+[tool.setuptools.dynamic]
+version = { file = "version" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

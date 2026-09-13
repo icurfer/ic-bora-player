@@ -1,0 +1,140 @@
+"""libmpv 래퍼.
+
+재생·디코딩·렌더는 전부 libmpv 에 맡긴다(기획서 §3-3). 이 파일은 그 위에 얇은 껍질만 씌운다.
+
+실측으로 확인한 것(research 3):
+- 콜백 타입 이름은 `mpv.MpvGlGetProcAddressFn` 이다. 인터넷 예제에 흔한
+  `OpenGlCbGetProcAddrFn` 은 옛 이름이라 AttributeError 가 난다.
+- `hwdec='auto-safe'` 가 실제로 고르는 것은 환경마다 다르다(lab 에서는 vulkan).
+  특정 백엔드를 기대하지 말고 `hwdec_current` 를 읽어서 표시한다.
+"""
+
+from __future__ import annotations
+
+import locale
+from pathlib import Path
+from typing import Callable
+
+import mpv
+
+from .util.gl import get_proc_address
+
+
+def _force_c_numeric() -> None:
+    """libmpv 는 LC_NUMERIC 이 C 가 아니면 초기화를 거부한다
+    ("Non-C locale detected. This is not supported.").
+
+    GTK 가 `setlocale(LC_ALL, "")` 을 부르면 ko_KR 로 바뀌므로, mpv 를 만들기 직전에
+    되돌린다. 숫자 표기만 C 로 두는 것이라 UI 한글 표시에는 영향이 없다.
+    (Celluloid 도 Flatpak 매니페스트에 `LC_NUMERIC=C` 를 박아 같은 문제를 피한다.)
+    """
+    try:
+        locale.setlocale(locale.LC_NUMERIC, "C")
+    except locale.Error:
+        pass
+
+
+class Player:
+    """libmpv 인스턴스 하나와 그 렌더 컨텍스트를 소유한다."""
+
+    def __init__(self) -> None:
+        _force_c_numeric()
+        self._mpv = mpv.MPV(
+            vo="libmpv",            # 렌더 컨텍스트로 직접 그린다
+            hwdec="auto-safe",
+            really_quiet=True,
+            keep_open="yes",        # 끝나도 창을 닫지 않는다
+            osc=False,              # 자체 OSD 컨트롤을 쓰지 않는다. UI 는 우리가 그린다
+            input_default_bindings=False,
+        )
+        self._ctx: mpv.MpvRenderContext | None = None
+        self._update_cb: Callable[[], None] | None = None
+
+    # ── 렌더 컨텍스트 ────────────────────────────────────────────────────
+    def attach_render_context(self, on_update: Callable[[], None]) -> None:
+        """GL 컨텍스트가 현재(current)인 상태에서 불러야 한다 — GLArea 의 realize 시점."""
+        if self._ctx is not None:
+            return
+        self._update_cb = on_update
+        self._ctx = mpv.MpvRenderContext(
+            self._mpv,
+            "opengl",
+            opengl_init_params={"get_proc_address": mpv.MpvGlGetProcAddressFn(get_proc_address)},
+        )
+        self._ctx.update_cb = self._on_update
+
+    def _on_update(self) -> None:
+        if self._update_cb is not None:
+            self._update_cb()
+
+    def render(self, width: int, height: int, fbo: int) -> None:
+        """GLArea 의 render 시그널에서 부른다. flip_y 를 주지 않으면 화면이 뒤집힌다."""
+        if self._ctx is None:
+            return
+        self._ctx.render(flip_y=True, opengl_fbo={"w": width, "h": height, "fbo": fbo})
+
+    # ── 재생 ─────────────────────────────────────────────────────────────
+    def open(self, path: Path | str) -> None:
+        self._mpv.play(str(path))
+
+    def toggle_pause(self) -> None:
+        self._mpv.pause = not self._mpv.pause
+
+    def seek_absolute(self, seconds: float) -> None:
+        try:
+            self._mpv.seek(seconds, reference="absolute")
+        except SystemError:
+            pass        # 아직 파일이 안 열렸을 때. 무시해도 되는 상황이다
+
+    def seek_relative(self, seconds: float) -> None:
+        try:
+            self._mpv.seek(seconds, reference="relative")
+        except SystemError:
+            pass
+
+    # ── 상태 ─────────────────────────────────────────────────────────────
+    @property
+    def paused(self) -> bool:
+        return bool(self._mpv.pause)
+
+    @property
+    def duration(self) -> float | None:
+        return self._mpv.duration
+
+    @property
+    def time_pos(self) -> float | None:
+        return self._mpv.time_pos
+
+    @property
+    def volume(self) -> float:
+        return float(self._mpv.volume or 0)
+
+    @volume.setter
+    def volume(self, value: float) -> None:
+        self._mpv.volume = max(0.0, min(130.0, value))
+
+    @property
+    def hwdec_current(self) -> str:
+        return str(self._mpv.hwdec_current or "no")
+
+    @property
+    def media_title(self) -> str | None:
+        return self._mpv.media_title
+
+    def observe(self, name: str, handler: Callable) -> None:
+        """mpv 프로퍼티 변화를 구독한다. 콜백은 mpv 스레드에서 불리므로
+        UI 를 건드리려면 GLib.idle_add 로 넘겨야 한다."""
+        self._mpv.observe_property(name, handler)
+
+    # ── 정리 ─────────────────────────────────────────────────────────────
+    def close(self) -> None:
+        if self._ctx is not None:
+            try:
+                self._ctx.free()
+            except Exception:
+                pass
+            self._ctx = None
+        try:
+            self._mpv.terminate()
+        except Exception:
+            pass
