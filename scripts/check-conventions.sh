@@ -39,10 +39,14 @@ cd "$(git rev-parse --show-toplevel)"
 #   AREA_VFILE=(   'backend/version'         'frontend/version'         )
 # (module: monorepo — /praxis-init enables this shape when it detects >1 unit.)
 # 이 저장소: 배포 단위 하나(데스크톱 앱), 트리거는 루트 'version'.
-# 아직 코드가 없어 경로는 기획서 §5 의 예정 배치다 — 실제 트리를 만들 때 맞춘다.
-# scripts/ 와 docs/ 는 배포물이 아니므로 일부러 뺐다(개발 도구를 고칠 때 bump 를 강요하지 않는다).
+# 아직 코드가 없어 코드 경로는 기획서 §5 의 예정 배치다 — 실제 트리를 만들 때 맞춘다.
+#
+# ⚠ docs/spec · docs/research · docs/scope · docs/deferred · docs/done 도 포함한다.
+#   CI 가 아직 없더라도 version 은 프로젝트의 진행 상태 표시이므로 관리한다(사용자 지시, 2026-09-13).
+#   기획 단계에서는 산출물이 문서뿐이라, 문서를 빼면 version 이 영영 안 움직인다.
+# 제외: scripts/(개발 도구) · docs/README.md · docs/requirements/(색인·백로그는 잦은 갱신)
 AREA_CODE_RE=(
-  '^(src/|bora/|data/|po/|packaging/|pyproject\.toml$|setup\.cfg$|meson\.build$|requirements[^/]*\.txt$|[^/]*\.(desktop|metainfo\.xml)$|[^/]*\.flatpak\.(ya?ml|json)$)'
+  '^(src/|bora/|data/|po/|packaging/|docs/(spec|research|scope|deferred|done)/|pyproject\.toml$|setup\.cfg$|meson\.build$|requirements[^/]*\.txt$|[^/]*\.(desktop|metainfo\.xml)$|[^/]*\.flatpak\.(ya?ml|json)$)'
 )
 AREA_VFILE=(
   'version'

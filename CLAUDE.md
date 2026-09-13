@@ -50,6 +50,11 @@ libmpv 를 재생 엔진으로 쓰는 GTK 프론트엔드. 국내 자막(CP949 �
 
 ## 위임된 책임 (지시 없이 에이전트가 한다)
 - 배포에 영향 있는 코드를 건드리면 `version` 을 patch bump 한다.
+- **기획 단계에도 `version` 을 관리한다.** `docs/spec` · `docs/research` · `docs/scope` ·
+  `docs/deferred` · `docs/done` 의 산출물이 추가·변경되면 patch bump 한다.
+  (why: CI 가 없다는 이유로 bump 를 건너뛰면 `version` 이 영영 안 움직인다. `version` 은 CI 트리거이기
+  이전에 **프로젝트의 진행 상태 표시**다. Gate A 가 이를 강제한다.)
+  색인·백로그(`docs/README.md`, `docs/requirements/`)와 개발 도구(`scripts/`)는 대상이 아니다.
 - `version` 은 **1줄, 빈 줄 없음** — `printf '%s' "<ver>" > version`.
 - 코드 변경 → 검증 → 커밋까지 끝났으면 **push 까지가 한 사이클**이다. 별도 지시를 기다리지 않는다.
   (예외로 사전 확인: force push, main 외 브랜치, 다른 저장소.)
@@ -76,7 +81,7 @@ libmpv 를 재생 엔진으로 쓰는 GTK 프론트엔드. 국내 자막(CP949 �
 
 | 게이트 | 막는 것 |
 |---|---|
-| A | 배포 코드가 바뀌었는데 `version` 이 스테이징되지 않음 (CI 미발화) |
+| A | 배포 코드 **또는 `docs/` 산출물**이 바뀌었는데 `version` 이 스테이징되지 않음 |
 | B | `version` 형식 위반 (1줄·빈 줄 없음) |
 | C | 비밀값·금칙 패턴 (키, 토큰, 개인키) |
 | D | 배포 매니페스트 태그 ↔ `version` 불일치 (배포 방식 확정 시 활성화) |
