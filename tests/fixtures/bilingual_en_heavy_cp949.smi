@@ -1,0 +1,19 @@
+<SAMI>
+<HEAD><TITLE>test</TITLE>
+<STYLE TYPE="text/css"><!--
+P { text-align:center; font-size:20pt; color:white; }
+.KRCC { Name:Korean; lang:ko-KR; SAMIType:CC; }
+.ENCC { Name:English; lang:en-US; SAMIType:CC; }
+--></STYLE></HEAD>
+<BODY>
+<SYNC Start=2000><P Class=ENCC>This is a fairly long english subtitle line number 1 for the test.
+<SYNC Start=2000><P Class=KRCC>ÂªÀº ÇÑ±Û
+<SYNC Start=4000><P Class=ENCC>This is a fairly long english subtitle line number 2 for the test.
+<SYNC Start=4000><P Class=KRCC>ÂªÀº ÇÑ±Û
+<SYNC Start=6000><P Class=ENCC>This is a fairly long english subtitle line number 3 for the test.
+<SYNC Start=6000><P Class=KRCC>ÂªÀº ÇÑ±Û
+<SYNC Start=8000><P Class=ENCC>This is a fairly long english subtitle line number 4 for the test.
+<SYNC Start=8000><P Class=KRCC>ÂªÀº ÇÑ±Û
+<SYNC Start=10000><P Class=ENCC>This is a fairly long english subtitle line number 5 for the test.
+<SYNC Start=10000><P Class=KRCC>ÂªÀº ÇÑ±Û
+</BODY></SAMI>

@@ -1,5 +1,10 @@
 # CHANGELOG
 
+- **0.2.1** (2026-09-13) — scope §4 2·3단계: 자막 판정(`subtitle/detect.py`)과 SAMI 분리(`subtitle/sami.py`)를
+  프로토타입에서 승격, 테스트 26개로 고정.
+  **Gate F 가 죽어 있던 것을 발견해 되살렸다** — grep 의 바이트 범위 패턴이 아무것도 매칭하지 않아
+  한자 검사가 조용히 무력화돼 있었다. 검사를 `scripts/check_taboo.py` 로 옮기고
+  `scripts/selftest_taboo.sh`(미탐·오탐 양쪽 검증)를 추가했다.
 - **0.2.0** (2026-09-13) — **첫 코드.** scope §4 1단계 — 창이 뜨고 영상이 재생된다.
   `src/bora/{__main__,app,window,player,glarea,util/gl}.py`. 스파이크 코드를 승격했고 PyOpenGL 을 쓰지 않는다.
   **버그 수정**: libmpv 가 `LC_NUMERIC` 이 C 가 아니면 초기화를 거부한다 — `Player.__init__` 에서 보정.

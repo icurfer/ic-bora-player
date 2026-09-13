@@ -1,0 +1,11 @@
+<SAMI>
+<HEAD><TITLE>test</TITLE>
+<STYLE TYPE="text/css"><!--
+P { text-align:center; font-size:20pt; color:white; }
+.KRCC { Name:Korean; lang:ko-KR; SAMIType:CC; }
+.ENCC { Name:English; lang:en-US; SAMIType:CC; }
+--></STYLE></HEAD>
+<BODY>
+<SYNC Start=1000><P Class=KRCC>안녕하세요
+<SYNC Start=3000><P Class=KRCC>&nbsp;
+</BODY></SAMI>

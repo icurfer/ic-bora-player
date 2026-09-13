@@ -94,18 +94,9 @@ SECRET_MIN_LEN=8
 FORBIDDEN_GLOBS=('.')
 
 # 금칙 표현(Gate F) -----------------------------------------------------------
-# 사용자 전역 규칙: 문서·코드에 CJK 통합 한자를 쓰지 않는다(읽는 사람이 못 알아본다).
-# 로케일에 따라 한글까지 오탐하지 않도록 UTF-8 '바이트열'로 매칭한다(LC_ALL=C).
-# 패턴을 유니코드 이스케이프로 쓰는 이유: 이 스크립트 자신이 자기 패턴에 걸리지 않게 하려고.
-TABOO_PATTERNS=(
-  $'[\xe4-\xe9][\x80-\xbf][\x80-\xbf]'   # U+4000~U+9FFF = CJK 통합 한자(+확장 A)
-  $'\xec\xa0\x84\xec\x82\xac'            # 회사 전체를 뜻할 때만 맞는 표기. 전체/모두로 쓴다
-)
-TABOO_REASONS=(
-  '한자(CJK 통합 한자)가 들어 있다 — 한글이나 기호로 바꾼다.'
-  '금칙어가 들어 있다 — 회사 전체를 뜻할 때만 맞는 표기이므로 전체/모두로 바꾼다.'
-)
-# 예외 경로: 자막 처리 프로젝트라 테스트 자막·조사 샘플에는 일본어·중국어가 정당하게 들어간다.
+# 사용자 전역 규칙: 문서·코드에 한자를 쓰지 않는다(읽는 사람이 못 알아본다).
+# 검사 본체와 패턴은 scripts/check_taboo.py 에 있다. 여기서는 예외 경로만 정한다.
+# 예외: 자막 처리 프로젝트라 테스트 자막·조사 샘플에는 일본어·중국어가 정당하게 들어간다.
 TABOO_EXCLUDE_RE='^(tests?/fixtures/|docs/research/samples/|third_party/)'
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -285,24 +276,26 @@ if content CLAUDE.md >/dev/null 2>&1 && content AGENTS.md >/dev/null 2>&1; then
   fi
 fi
 
-# ── Gate F: 금칙 표현(한자·금칙어) ──────────────────────────────────────────
+# ── Gate F: 금칙 표현(한자·금칙어) ────────────────────────
 # 문서 규칙이지만 기계로 검사되므로 CLAUDE.md 문장이 아니라 여기 있다.
-# 스테이징된 블롭을 바이트로 훑는다 — 로케일에 상관없이 같은 판정이 나와야 한다.
-taboo_hit=0
-while IFS= read -r f; do
-  [ -n "$f" ] || continue
-  printf '%s\n' "$f" | grep -Eq -e "$TABOO_EXCLUDE_RE" && continue
-  body="$(content "$f")" || continue
-  [ -n "$body" ] || continue
-  for i in "${!TABOO_PATTERNS[@]}"; do
-    while IFS= read -r line; do
-      err "${TABOO_REASONS[$i]}"
-      printf '        %s: %s\n' "$f" "$line" >&2
-      taboo_hit=1
-    done < <(printf '%s\n' "$body" | LC_ALL=C grep -nIE -e "${TABOO_PATTERNS[$i]}" || true)
-  done
-done < <(scan_targets)
-[ "$taboo_hit" -eq 0 ] && ok "금칙 표현 없음(한자·금칙어)"
+# 검사 본체는 scripts/check_taboo.py 에 있다 — grep 으로는 로케일에 따라
+# 미탐·오탐이 갈려 게이트로 쓸 수 없었다(그 파일의 주석에 실측 기록).
+# 게이트가 살아 있는지는 `bash scripts/selftest_taboo.sh` 로 확인한다.
+TABOO_CHECKER="$(git rev-parse --show-toplevel)/scripts/check_taboo.py"
+if command -v python3 >/dev/null 2>&1 && [ -f "$TABOO_CHECKER" ]; then
+  taboo_report="$(scan_targets | python3 "$TABOO_CHECKER" "$MODE" "$TABOO_EXCLUDE_RE" || true)"
+  if [ -n "$taboo_report" ]; then
+    while IFS="$(printf '\t')" read -r reason path lineno line; do
+      [ -n "$reason" ] || continue
+      err "$reason"
+      printf '        %s: %s: %s\n' "$path" "$lineno" "$line" >&2
+    done <<< "$taboo_report"
+  else
+    ok "금칙 표현 없음(한자·금칙어)"
+  fi
+else
+  printf '%s! python3 또는 check_taboo.py 가 없어 Gate F 를 건너뛴다.%s\n' "$DIM" "$RST" >&2
+fi
 
 # ── Result ──────────────────────────────────────────────────────────────────
 if [ "$fail" -ne 0 ]; then
