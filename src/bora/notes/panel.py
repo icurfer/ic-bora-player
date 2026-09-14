@@ -169,6 +169,8 @@ class NotePanel(Gtk.Box):
         end_iter = self._buffer.get_end_iter()
         prefix = "" if end_iter.starts_line() else "\n"
         self._buffer.insert(end_iter, prefix + line)
+        # 커서를 그 줄 끝에 둔다 — 패널이 열려 있으면 바로 제목을 칠 수 있다.
+        self._buffer.place_cursor(self._buffer.get_end_iter())
         self._retag()
         # 패널이 닫혀 있으면 자동 저장 타이머가 돌 일이 없다. 바로 저장한다.
         if not self.get_visible():

@@ -22,6 +22,7 @@ from . import desktop as desktop_setup  # noqa: E402
 from .editor import EditorWindow  # noqa: E402
 from .notes import NoteDocument, NotePanel  # noqa: E402
 from .state import Pin, State  # noqa: E402
+from .stt import MODELS as STT_MODELS, ExtractRunner, Extraction, ensure_ready  # noqa: E402
 from .subtitle.loader import SUB_SUFFIXES, Plan, prepare_for_video  # noqa: E402
 from .tracks import track_label  # noqa: E402
 
@@ -57,6 +58,8 @@ class BoraWindow(Adw.ApplicationWindow):
         self._save_state_id = 0
         self._editor: EditorWindow | None = None
         self._notes_open = False
+        self._stt: ExtractRunner | None = None
+        self._stt_bar: Gtk.ProgressBar | None = None
         self._last_toast_title: str | None = None
 
         # 하위 메뉴 팝오버. 부모는 하단 메뉴 버튼에 붙인다.
@@ -64,6 +67,7 @@ class BoraWindow(Adw.ApplicationWindow):
         self._audio_popover = Gtk.Popover()
         self._more_popover = Gtk.Popover()
         self._pin_popover = Gtk.Popover()
+        self._stt_popover = Gtk.Popover()
 
         self._toasts = Adw.ToastOverlay()
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -255,7 +259,9 @@ class BoraWindow(Adw.ApplicationWindow):
             (None, None, None),
             ("전체화면 나가기" if self.is_fullscreen() else "전체화면", "F", self.toggle_fullscreen),
             ("구간 반복", "A", self.cycle_loop),
-            ("핀 꽂기", "P", lambda: self.add_pin()),
+            ("핀 꽂기 (제목 입력)", "P", lambda: self.add_pin()),
+            ("핀만 꽂기", "Shift+P", lambda: self.add_pin(write_title=False)),
+            ("핀 목록", "", self._show_pin_menu),
             ("학습 메모", "M", self.toggle_notes),
             ("자막 편집", "E", self.open_editor),
             ("스크린샷 저장", "C", lambda: self.take_screenshot(True)),
@@ -563,6 +569,7 @@ class BoraWindow(Adw.ApplicationWindow):
         if want:
             if self._notes.doc is None or self._notes.doc.path != NoteDocument.path_for(self._current):
                 self._notes.load_for(self._current, self._current.stem)
+            self._notes.set_visible(True)
             # 처음 열 때 절반쯤 차지하게 둔다
             if self._paned.get_position() <= 0:
                 self._paned.set_position(max(360, self.get_width() - 380))
@@ -659,6 +666,125 @@ class BoraWindow(Adw.ApplicationWindow):
         self.toast(f"스크린샷 저장: {path}")
         return path
 
+    # ── 텍스트 추출 ──────────────────────────────────────────────────────
+    def _offer_extract(self) -> None:
+        if self._current is None or self._plan is not None or self._stt is not None:
+            return
+        ready, _hint = ensure_ready()
+        title = "자막이 없다 — 음성에서 만들까요?" if ready else "자막이 없다 (음성 추출 미설치)"
+        self._last_toast_title = title      # 로그·검증에서 확인할 수 있게 남긴다
+        toast = Adw.Toast(title=title, timeout=10)
+        toast.set_button_label("추출" if ready else "안내")
+        toast.connect("button-clicked", lambda *_: self._show_extract_menu())
+        self._toasts.add_toast(toast)
+
+    def _show_extract_menu(self) -> None:
+        self._popup_submenu(self._stt_popover, self._rebuild_extract_menu)
+
+    def _rebuild_extract_menu(self) -> None:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
+                      margin_top=10, margin_bottom=10, margin_start=10, margin_end=10,
+                      width_request=320)
+        ready, hint = ensure_ready()
+
+        if self._stt is not None and self._stt.running:
+            box.append(Gtk.Label(label="추출 중", xalign=0))
+            self._stt_bar = Gtk.ProgressBar(show_text=True, text="준비 중")
+            box.append(self._stt_bar)
+            cancel = Gtk.Button(label="취소", css_classes=["destructive-action"])
+            cancel.connect("clicked", lambda *_: self._cancel_extract())
+            box.append(cancel)
+            self._stt_popover.set_child(box)
+            return
+
+        if not ready:
+            label = Gtk.Label(label=hint, xalign=0, wrap=True, css_classes=["dim-label"])
+            box.append(label)
+            self._stt_popover.set_child(box)
+            return
+
+        box.append(Gtk.Label(label="음성에서 자막 만들기", xalign=0))
+        box.append(Gtk.Label(
+            label="영상은 건드리지 않는다. 결과는 영상 옆 .srt 로 저장되고 바로 붙는다.\n"
+                  "끝나면 자막 편집기로 고칠 수 있다.",
+            xalign=0, wrap=True, css_classes=["dim-label"]))
+        box.append(Gtk.Separator(margin_top=4))
+
+        model_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        model_row.append(Gtk.Label(label="모델"))
+        names = [f"{name} — {note} ({size})" for name, note, size in STT_MODELS]
+        self._stt_model = Gtk.DropDown.new_from_strings(names)
+        self._stt_model.set_selected(2)          # small
+        self._stt_model.set_hexpand(True)
+        model_row.append(self._stt_model)
+        box.append(model_row)
+
+        lang_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        lang_row.append(Gtk.Label(label="언어"))
+        self._stt_lang = Gtk.DropDown.new_from_strings(["한국어", "영어", "자동 감지"])
+        self._stt_lang.set_hexpand(True)
+        lang_row.append(self._stt_lang)
+        box.append(lang_row)
+
+        start = Gtk.Button(label="추출 시작", css_classes=["suggested-action"])
+        start.connect("clicked", lambda *_: self.start_extract())
+        box.append(start)
+        self._stt_popover.set_child(box)
+
+    def start_extract(self) -> bool:
+        if self._current is None or (self._stt is not None and self._stt.running):
+            return False
+        ready, hint = ensure_ready()
+        if not ready:
+            self.toast(hint.splitlines()[0])
+            return False
+
+        model = STT_MODELS[self._stt_model.get_selected()][0] if hasattr(self, "_stt_model") else "small"
+        lang = ["ko", "en", ""][self._stt_lang.get_selected()] if hasattr(self, "_stt_lang") else "ko"
+        output = self._current.with_suffix(f".{lang or 'auto'}.srt")
+
+        self._stt = ExtractRunner(
+            on_progress=lambda *a: GLib.idle_add(self._on_extract_progress, *a),
+            on_done=lambda *a: GLib.idle_add(self._on_extract_done, *a),
+            on_error=lambda m: GLib.idle_add(self._on_extract_error, m),
+        )
+        if not self._stt.start(Extraction(self._current, output, model, lang)):
+            self._stt = None
+            return False
+        self._main_popover.popdown()
+        self.toast(f"자막 추출 시작 ({model}) — 시간이 걸린다")
+        self._rebuild_extract_menu()
+        return True
+
+    def _cancel_extract(self) -> None:
+        if self._stt is not None:
+            self._stt.cancel()
+
+    def _on_extract_progress(self, seconds: float, total: float, cues: int) -> bool:
+        if self._stt_bar is not None:
+            fraction = (seconds / total) if total else 0.0
+            self._stt_bar.set_fraction(max(0.0, min(1.0, fraction)))
+            self._stt_bar.set_text(f"{_fmt_time(seconds)} / {_fmt_time(total)} · {cues}줄")
+        self._status.set_label(f"자막 추출 {int((seconds / total * 100) if total else 0)}% · {cues}줄")
+        return False
+
+    def _on_extract_done(self, path: Path, cues: int) -> bool:
+        self._stt = None
+        self._stt_bar = None
+        self.toast(f"자막 {cues}줄을 만들었다 — {path.name}")
+        self._status.set_label("")
+        # 만든 자막을 바로 물린다. 어긋나면 자막 편집기로 고칠 수 있다.
+        if self._current is not None:
+            self.open_path(self._current, path)
+        return False
+
+    def _on_extract_error(self, message: str) -> bool:
+        self._stt = None
+        self._stt_bar = None
+        self._status.set_label("")
+        self.toast(f"자막 추출: {message}")
+        return False
+
     # ── 구간 반복 · 핀 ───────────────────────────────────────────────────
     def cycle_loop(self) -> None:
         """A -> B -> 해제. 버튼 하나로 끝낸다(곰·KMP 는 키 두 개를 쓴다)."""
@@ -710,8 +836,12 @@ class BoraWindow(Adw.ApplicationWindow):
                 self._loop_btn.set_tooltip_text("구간 반복 (A)")
             self._loop_btn.remove_css_class("suggested-action")
 
-    def add_pin(self, label: str = "") -> Pin | None:
-        """핀을 꽂는다. 구간이 잡혀 있으면 **구간 핀**, 아니면 시점 핀."""
+    def add_pin(self, label: str = "", write_title: bool = True) -> Pin | None:
+        """핀을 꽂는다. 구간이 잡혀 있으면 **구간 핀**, 아니면 시점 핀.
+
+        `write_title` 이면 메모를 열고 그 줄 끝에 커서를 둔다 — 바로 제목을 칠 수 있다.
+        이 앱을 쓰는 이유가 "타이핑이 손글씨보다 빠르기 때문"이라, 제목 입력도 키보드로 이어져야 한다.
+        """
         if self._current is None:
             return None
         a, b = self.player.loop_a, self.player.loop_b
@@ -727,6 +857,12 @@ class BoraWindow(Adw.ApplicationWindow):
         try:
             if self._notes.append_pin(pin.start, pin.end, label):
                 note += " · 메모에 남김"
+                if write_title and not label:
+                    # 패널을 열고 커서를 그 줄 끝에 둔다. 이어서 치면 그대로 제목이 된다.
+                    if not self._notes_open:
+                        self.toggle_notes(True)
+                    self._notes.focus_editor()
+                    note += " — 이어서 제목을 입력하세요"
         except Exception as exc:            # 메모 실패가 핀을 막으면 안 된다
             log.warning("핀을 메모에 남기지 못했다: %s", exc)
         self.toast(note)
@@ -811,6 +947,9 @@ class BoraWindow(Adw.ApplicationWindow):
 
         box.append(self._menu_row("학습 메모", "M", self.toggle_notes,
                                   "열려 있다" if self._notes_open else "영상 옆 .md 에 기록"))
+        ready, _hint = ensure_ready()
+        box.append(self._menu_row("음성에서 자막 만들기", "", self._show_extract_menu,
+                                  "준비됨" if ready else "설치 필요"))
         box.append(self._menu_row("자막 편집", "E", self.open_editor,
                                   "재생 위치를 그 줄에 박는다"))
         box.append(Gtk.Separator(margin_top=4, margin_bottom=4))
@@ -818,7 +957,7 @@ class BoraWindow(Adw.ApplicationWindow):
         box.append(self._menu_row("화면·속도·자막 모양", "", self._show_more_menu,
                                   f"{self.player.speed:g}x"))
         pins = self.state.pins_for(self._current) if self._current else []
-        box.append(self._menu_row("핀 목록", "P", self._show_pin_menu,
+        box.append(self._menu_row("핀 목록", "", self._show_pin_menu,
                                   f"{len(pins)}개" if pins else "꽂은 핀 없음"))
         box.append(self._menu_row("스크린샷", "C", lambda: self.take_screenshot(True)))
         box.append(self._menu_row("파일 열기", "O", self.choose_file))
@@ -973,7 +1112,8 @@ class BoraWindow(Adw.ApplicationWindow):
         box.append(self._loop_btn)
 
         self._pin_btn = Gtk.Button(icon_name="starred-symbolic",
-                                   tooltip_text="이 자리에 핀 꽂기 (P) — 구간이 잡혀 있으면 구간으로")
+                                   tooltip_text="핀 꽂기 (P) — 메모에 남기고 제목을 이어서 입력한다. "
+                                                "Shift+P 는 조용히 꽂기만")
         self._pin_btn.connect("clicked", lambda *_: self.add_pin())
         box.append(self._pin_btn)
 
@@ -1044,6 +1184,9 @@ class BoraWindow(Adw.ApplicationWindow):
         GLib.timeout_add(300, self._refresh_subtitle_menu_once)
         if self._plan is not None:
             self.toast(f"자막: {self._plan.summary()}")
+        else:
+            # 자막이 없는 강의는 메모·검색·질의가 반쪽이 된다. 만들 수 있다고 알려 준다.
+            GLib.timeout_add_seconds(2, lambda: (self._offer_extract(), False)[1])
         # 길이를 알아야 이어볼지 판단할 수 있다. 파일이 열린 뒤에 묻는다.
         GLib.timeout_add(600, lambda: (self._offer_resume(path), False)[1])
 
@@ -1112,6 +1255,8 @@ class BoraWindow(Adw.ApplicationWindow):
         return True
 
     def _on_close(self, *_args) -> bool:
+        if self._stt is not None:
+            self._stt.cancel()
         self._notes.save()
         self._remember_position()
         self.state.settings.speed = self.player.speed
