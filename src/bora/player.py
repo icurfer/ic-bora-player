@@ -193,7 +193,8 @@ class Player:
         return path
 
     # ── 자막 모양 ────────────────────────────────────────────────────────
-    def set_sub_style(self, font: str = "", size: int = 0, color: str = "") -> None:
+    def set_sub_style(self, font: str = "", size: int = 0, color: str = "",
+                      pos: float | None = None) -> None:
         """국내 자막은 글자가 작아 안 보이는 일이 잦다. 크기를 키울 수 있어야 한다."""
         if font:
             self._mpv.sub_font = font
@@ -201,6 +202,23 @@ class Player:
             self._mpv.sub_font_size = int(size)
         if color:
             self._mpv.sub_color = color
+        if pos is not None:
+            self.sub_pos = pos
+
+    # 자막 세로 위치. 0 = 화면 위, 100 = 기본(아래), 150 = 더 아래.
+    # 강의 영상은 하단에 슬라이드 글자가 있어 자막이 겹치는 일이 잦다 — 위로 올릴 수 있어야 한다.
+    SUB_POS_MIN, SUB_POS_MAX, SUB_POS_DEFAULT = 0, 150, 100
+
+    @property
+    def sub_pos(self) -> float:
+        return float(self._mpv.sub_pos if self._mpv.sub_pos is not None else self.SUB_POS_DEFAULT)
+
+    @sub_pos.setter
+    def sub_pos(self, value: float) -> None:
+        # ⚠ 범위를 벗어나면 mpv 가 TypeError 로 거부한다(실측: 200 은 거부). 여기서 잘라 둔다.
+        clamped = max(self.SUB_POS_MIN, min(self.SUB_POS_MAX, float(value)))
+        self._mpv.sub_pos = clamped
+        log.debug("자막 위치: %.0f", clamped)
 
     @property
     def sub_font_size(self) -> int:

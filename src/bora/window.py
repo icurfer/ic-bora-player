@@ -178,6 +178,8 @@ class BoraWindow(Adw.ApplicationWindow):
             Gdk.KEY_F5: lambda: self._set_loop_edge("a"),
             Gdk.KEY_F6: lambda: self._set_loop_edge("b"),
             Gdk.KEY_p: lambda: self.add_pin(),
+            Gdk.KEY_r: lambda: self._nudge_sub_pos(-5),     # 위로
+            Gdk.KEY_R: lambda: self._nudge_sub_pos(5),      # Shift+R — 아래로
             Gdk.KEY_P: self._show_pin_menu,
             Gdk.KEY_bracketleft: lambda: self._nudge_sub_delay(-0.1),
             Gdk.KEY_bracketright: lambda: self._nudge_sub_delay(0.1),
@@ -432,6 +434,18 @@ class BoraWindow(Adw.ApplicationWindow):
             color_row.append(btn)
         box.append(color_row)
 
+        pos_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        pos_row.append(Gtk.Label(label="자막 위치"))
+        pos = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, hexpand=True, draw_value=False,
+                        tooltip_text="왼쪽이 화면 위 (R / Shift+R)")
+        pos.set_range(self.player.SUB_POS_MIN, self.player.SUB_POS_MAX)
+        pos.set_value(self.player.sub_pos)
+        pos.add_mark(self.player.SUB_POS_DEFAULT, Gtk.PositionType.BOTTOM, None)
+        pos.connect("value-changed", self._on_sub_pos_changed)
+        pos_row.append(pos)
+        self._sub_pos_scale = pos
+        box.append(pos_row)
+
         box.append(Gtk.Separator(margin_top=4))
         shots = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6, homogeneous=True)
         with_subs = Gtk.Button(label="스크린샷 (자막 포함)")
@@ -497,6 +511,18 @@ class BoraWindow(Adw.ApplicationWindow):
         self.player.set_sub_style(font=name)
         self.state.settings.sub_font = name
         self.toast(f"자막 글꼴: {name}")
+
+    def _on_sub_pos_changed(self, scale: Gtk.Scale) -> None:
+        self.player.sub_pos = scale.get_value()
+        self.state.settings.sub_pos = self.player.sub_pos
+
+    def _nudge_sub_pos(self, delta: float) -> None:
+        """R = 위로, Shift+R = 아래로. 강의 슬라이드와 겹칠 때 바로 피한다."""
+        self.player.sub_pos = self.player.sub_pos + delta
+        self.state.settings.sub_pos = self.player.sub_pos
+        self.toast(f"자막 위치 {self.player.sub_pos:.0f}")
+        if hasattr(self, "_sub_pos_scale"):
+            self._sub_pos_scale.set_value(self.player.sub_pos)
 
     def _on_sub_color(self, _button, value: str) -> None:
         self.player.set_sub_style(color=value)
@@ -964,7 +990,8 @@ class BoraWindow(Adw.ApplicationWindow):
         st = self.state.settings
         self.player.speed = st.speed
         self.player.volume = st.volume
-        self.player.set_sub_style(font=st.sub_font, size=st.sub_font_size, color=st.sub_color)
+        self.player.set_sub_style(font=st.sub_font, size=st.sub_font_size,
+                                  color=st.sub_color, pos=st.sub_pos)
 
     def _remember_position(self) -> bool:
         """지금 보고 있는 위치를 기록한다. 30초마다, 그리고 파일 전환·종료 때."""
@@ -1086,6 +1113,7 @@ class BoraWindow(Adw.ApplicationWindow):
         self.state.settings.sub_font_size = self.player.sub_font_size
         self.state.settings.sub_font = self.player.sub_font
         self.state.settings.sub_color = self.player.sub_color
+        self.state.settings.sub_pos = self.player.sub_pos
         self.state.save()
         self.player.close()
         return False

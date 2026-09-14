@@ -99,6 +99,17 @@ def main() -> int:
                 p.set_sub_style(size=64)
                 check("자막 크기 변경", p.sub_font_size == 64, f"{p.sub_font_size}")
 
+                # 자막 위치 — 강의 슬라이드와 겹칠 때 피한다
+                check("자막 위치 기본값", abs(p.sub_pos - 100) < 0.1, f"{p.sub_pos}")
+                win._nudge_sub_pos(-20)
+                check("자막을 위로 올린다", abs(p.sub_pos - 80) < 0.1, f"{p.sub_pos}")
+                p.sub_pos = 999
+                check("위쪽 한계를 넘지 않는다", p.sub_pos == p.SUB_POS_MAX, f"{p.sub_pos}")
+                p.sub_pos = -50
+                check("아래쪽 한계를 넘지 않는다", p.sub_pos == p.SUB_POS_MIN, f"{p.sub_pos}")
+                p.sub_pos = 90
+                win.state.settings.sub_pos = p.sub_pos
+
                 # 스크린샷 — 렌더 경로가 있어야 된다
                 wait_until(lambda: (p.time_pos or 0) > 1.5, 5.0)
                 with_subs = win.take_screenshot(include_subs=True)
@@ -146,8 +157,10 @@ def main() -> int:
                 win.state.save()
                 again = State(cfg)
                 check("S3 자막 설정이 유지된다",
-                      again.settings.sub_font_size == 64 and again.settings.sub_color != "",
-                      f"size={again.settings.sub_font_size}, color={again.settings.sub_color}")
+                      again.settings.sub_font_size == 64 and again.settings.sub_color != ""
+                      and abs(again.settings.sub_pos - 90) < 0.1,
+                      f"size={again.settings.sub_font_size}, color={again.settings.sub_color}, "
+                      f"pos={again.settings.sub_pos}")
 
                 # R1 — 이어보기 제안이 실제로 토스트로 뜨는가
                 before = len(getattr(win, "_test_toasts", []))
