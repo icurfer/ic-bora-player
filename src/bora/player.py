@@ -41,11 +41,16 @@ def _force_c_numeric() -> None:
 class Player:
     """libmpv 인스턴스 하나와 그 렌더 컨텍스트를 소유한다."""
 
-    def __init__(self, debug: bool | None = None) -> None:
+    def __init__(self, debug: bool | None = None, vo: str = "libmpv") -> None:
+        """vo 는 기본이 'libmpv' — GLArea 렌더 컨텍스트로 직접 그린다.
+
+        ⚠ vo='libmpv' 는 렌더 컨텍스트가 붙어야 디코딩이 진행된다. 창 없이 로직만 시험할 때는
+        vo='null' 을 준다(대신 스크린샷처럼 렌더 결과가 필요한 기능은 동작하지 않는다).
+        """
         _force_c_numeric()
         debug = debug_enabled() if debug is None else debug
         options = dict(
-            vo="libmpv",            # 렌더 컨텍스트로 직접 그린다
+            vo=vo,                  # 렌더 컨텍스트로 직접 그린다
             hwdec="auto-safe",
             keep_open="yes",        # 끝나도 창을 닫지 않는다
             osc=False,              # 자체 OSD 컨트롤을 쓰지 않는다. UI 는 우리가 그린다
@@ -119,6 +124,59 @@ class Player:
         """`--sub-filter-regex` 를 갈아 끼운다. 빈 목록이면 필터를 끈다."""
         self._mpv.sub_filter_regex = list(patterns)
         self._mpv.sub_filter_regex_enable = bool(patterns)
+
+    # ── 재생 속도 · 화면 ─────────────────────────────────────────────────
+    SPEED_MIN, SPEED_MAX = 0.25, 4.0
+
+    @property
+    def speed(self) -> float:
+        return float(self._mpv.speed or 1.0)
+
+    @speed.setter
+    def speed(self, value: float) -> None:
+        value = max(self.SPEED_MIN, min(self.SPEED_MAX, float(value)))
+        self._mpv.speed = value
+        log.debug("재생 속도: %.2fx", value)
+
+    def set_aspect(self, ratio: str) -> None:
+        """'-1' 이면 원본. '16:9' '4:3' 같은 문자열도 mpv 가 그대로 받는다."""
+        self._mpv.video_aspect_override = ratio
+        log.debug("화면 비율: %s", ratio)
+
+    @property
+    def zoom(self) -> float:
+        """mpv 의 video-zoom 은 로그 스케일이다(0 = 원본, 1 = 두 배)."""
+        return float(self._mpv.video_zoom or 0.0)
+
+    @zoom.setter
+    def zoom(self, value: float) -> None:
+        self._mpv.video_zoom = max(-2.0, min(2.0, float(value)))
+
+    def screenshot(self, path: Path | str, include_subs: bool = True) -> Path:
+        """지금 화면을 파일로 저장한다.
+
+        'subtitles' 는 자막까지 포함한 화면, 'video' 는 영상만.
+        (실측: vo=libmpv 렌더 경로에서도 동작한다.)
+        """
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._mpv.screenshot_to_file(str(path), includes="subtitles" if include_subs else "video")
+        log.info("스크린샷: %s (자막 %s)", path, "포함" if include_subs else "제외")
+        return path
+
+    # ── 자막 모양 ────────────────────────────────────────────────────────
+    def set_sub_style(self, font: str = "", size: int = 0, color: str = "") -> None:
+        """국내 자막은 글자가 작아 안 보이는 일이 잦다. 크기를 키울 수 있어야 한다."""
+        if font:
+            self._mpv.sub_font = font
+        if size:
+            self._mpv.sub_font_size = int(size)
+        if color:
+            self._mpv.sub_color = color
+
+    @property
+    def sub_font_size(self) -> int:
+        return int(self._mpv.sub_font_size or 0)
 
     def stop(self) -> None:
         """정지 — 처음으로 되돌리고 멈춘다. 파일은 열어 둔다(자막 트랙도 그대로).

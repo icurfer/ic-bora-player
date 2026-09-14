@@ -18,6 +18,7 @@ from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
 from .glarea import MpvGLArea  # noqa: E402
 from .log import get as get_logger  # noqa: E402
 from .player import Player  # noqa: E402
+from .state import State  # noqa: E402
 from .subtitle.loader import SUB_SUFFIXES, Plan, prepare_for_video  # noqa: E402
 from .tracks import track_label  # noqa: E402
 
@@ -48,6 +49,9 @@ class BoraWindow(Adw.ApplicationWindow):
         self._cache_base = Path(GLib.get_user_cache_dir()) / "bora"
         self._track_buttons: list[Gtk.CheckButton] = []
         self._hide_ui_id = 0            # 전체화면에서 UI 를 감출 타이머
+        self.state = State()
+        self._resume_toast: Adw.Toast | None = None
+        self._save_state_id = 0
 
         self._toasts = Adw.ToastOverlay()
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -77,9 +81,13 @@ class BoraWindow(Adw.ApplicationWindow):
         )
         root.append(self._controls_revealer)
 
+        self._apply_settings()
+
         # 재생 위치는 폴링으로 갱신한다. mpv 의 time-pos 변화를 구독하면 초당 수십 번
         # 메인 루프로 넘어와 UI 가 불필요하게 바빠진다.
         GLib.timeout_add(250, self._tick)
+        # 이어보기 기록. 매초 쓸 이유가 없다(기획서 v0.2 §8-4 실측).
+        GLib.timeout_add_seconds(30, self._remember_position)
 
         # 창 자체에 붙인다 — 헤더바·컨트롤 위에 떨궈도 받아야 한다.
         self._setup_drop_target(self)
@@ -142,6 +150,11 @@ class BoraWindow(Adw.ApplicationWindow):
             Gdk.KEY_bracketleft: lambda: self._nudge_sub_delay(-0.1),
             Gdk.KEY_bracketright: lambda: self._nudge_sub_delay(0.1),
             Gdk.KEY_o: self.choose_file,
+            Gdk.KEY_c: lambda: self.take_screenshot(True),
+            Gdk.KEY_bracketleft: lambda: self._nudge_sub_delay(-0.1),
+            Gdk.KEY_bracketright: lambda: self._nudge_sub_delay(0.1),
+            Gdk.KEY_comma: lambda: self._nudge_speed(-0.25),
+            Gdk.KEY_period: lambda: self._nudge_speed(0.25),
         }
         handler = handlers.get(keyval)
         if handler is None:
@@ -152,6 +165,11 @@ class BoraWindow(Adw.ApplicationWindow):
     def _nudge_volume(self, delta: float) -> None:
         self.player.volume = self.player.volume + delta
         self._vol_scale.set_value(self.player.volume)
+
+    def _nudge_speed(self, delta: float) -> None:
+        self.player.speed = self.player.speed + delta
+        self.state.settings.speed = self.player.speed
+        self.toast(f"재생 속도 {self.player.speed:g}x")
 
     def _nudge_sub_delay(self, delta: float) -> None:
         self.player.sub_delay = self.player.sub_delay + delta
@@ -206,6 +224,7 @@ class BoraWindow(Adw.ApplicationWindow):
             ("자막 싱크 +0.1초", "]", lambda: self._nudge_sub_delay(0.1)),
             (None, None, None),
             ("전체화면 나가기" if self.is_fullscreen() else "전체화면", "F", self.toggle_fullscreen),
+            ("스크린샷 저장", "C", lambda: self.take_screenshot(True)),
             ("파일 열기", "O", self.choose_file),
         ]
         for label, accel, handler in items:
@@ -320,7 +339,106 @@ class BoraWindow(Adw.ApplicationWindow):
         self._audio_button.set_popover(self._audio_popover)
         self._rebuild_audio_menu()
         header.pack_end(self._audio_button)
+
+        self._more_button = Gtk.MenuButton(icon_name="open-menu-symbolic",
+                                           tooltip_text="속도·화면·스크린샷·최근 파일")
+        self._more_popover = Gtk.Popover()
+        self._more_button.set_popover(self._more_popover)
+        self._more_popover.connect("show", lambda *_: self._rebuild_more_menu())
+        self._rebuild_more_menu()
+        header.pack_end(self._more_button)
         return header
+
+    # ── 더보기 메뉴 ──────────────────────────────────────────────────────
+    SPEEDS = (0.5, 0.75, 1.0, 1.25, 1.5, 2.0)
+    ASPECTS = (("원본", "-1"), ("16:9", "16:9"), ("4:3", "4:3"), ("2.35:1", "2.35:1"))
+
+    def _rebuild_more_menu(self) -> None:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
+                      margin_top=10, margin_bottom=10, margin_start=10, margin_end=10)
+
+        box.append(Gtk.Label(label="재생 속도", xalign=0, css_classes=["dim-label"]))
+        speeds = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4, homogeneous=True)
+        current = round(self.player.speed, 2)
+        for value in self.SPEEDS:
+            btn = Gtk.ToggleButton(label=f"{value:g}x", active=abs(current - value) < 0.01)
+            btn.connect("toggled", self._on_speed_toggled, value)
+            speeds.append(btn)
+        box.append(speeds)
+
+        box.append(Gtk.Separator(margin_top=4))
+        box.append(Gtk.Label(label="화면 비율", xalign=0, css_classes=["dim-label"]))
+        aspects = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4, homogeneous=True)
+        for label, ratio in self.ASPECTS:
+            btn = Gtk.Button(label=label)
+            btn.connect("clicked", lambda _b, r=ratio: self.player.set_aspect(r))
+            aspects.append(btn)
+        box.append(aspects)
+
+        zoom_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        zoom_row.append(Gtk.Label(label="확대"))
+        zoom = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, hexpand=True, draw_value=False)
+        zoom.set_range(-1.0, 1.0)
+        zoom.set_value(self.player.zoom)
+        zoom.connect("value-changed", lambda sc: setattr(self.player, "zoom", sc.get_value()))
+        zoom_row.append(zoom)
+        box.append(zoom_row)
+
+        box.append(Gtk.Separator(margin_top=4))
+        box.append(Gtk.Label(label="자막 크기", xalign=0, css_classes=["dim-label"]))
+        size_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        adj = Gtk.Adjustment(value=self.player.sub_font_size or 55, lower=20, upper=120,
+                             step_increment=2, page_increment=10)
+        spin = Gtk.SpinButton(adjustment=adj, numeric=True)
+        spin.connect("value-changed", self._on_sub_size_changed)
+        size_row.append(spin)
+        box.append(size_row)
+
+        box.append(Gtk.Separator(margin_top=4))
+        shot = Gtk.Button(label="스크린샷 저장")
+        shot.connect("clicked", lambda *_: self.take_screenshot())
+        box.append(shot)
+
+        recent = self.state.recent_items()
+        if recent:
+            box.append(Gtk.Separator(margin_top=4))
+            box.append(Gtk.Label(label=f"최근 파일 {len(recent)}개", xalign=0,
+                                 css_classes=["dim-label"]))
+            for item in recent[:8]:
+                btn = Gtk.Button(label=item.title, has_frame=False)
+                btn.set_tooltip_text(item.path)
+                btn.connect("clicked", self._on_recent_clicked, item.path)
+                box.append(btn)
+        self._more_popover.set_child(box)
+
+    def _on_speed_toggled(self, button: Gtk.ToggleButton, value: float) -> None:
+        if button.get_active():
+            self.player.speed = value
+            self.state.settings.speed = value
+            self.toast(f"재생 속도 {value:g}x")
+
+    def _on_sub_size_changed(self, spin: Gtk.SpinButton) -> None:
+        size = int(spin.get_value())
+        self.player.set_sub_style(size=size)
+        self.state.settings.sub_font_size = size
+
+    def _on_recent_clicked(self, _button, path: str) -> None:
+        self._more_popover.popdown()
+        self.open_path(Path(path))
+
+    def take_screenshot(self, include_subs: bool = True) -> Path | None:
+        base = self.state.settings.screenshot_dir or GLib.get_user_special_dir(
+            GLib.UserDirectory.DIRECTORY_PICTURES) or str(Path.home())
+        stem = self._current.stem if self._current else "bora"
+        name = f"{stem}-{_fmt_time(self.player.time_pos).replace(':', '')}.png"
+        try:
+            path = self.player.screenshot(Path(base) / "bora" / name, include_subs)
+        except Exception as exc:
+            log.warning("스크린샷 실패: %s", exc)
+            self.toast(f"스크린샷 실패: {exc}")
+            return None
+        self.toast(f"스크린샷 저장: {path}")
+        return path
 
     def _rebuild_audio_menu(self) -> None:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
@@ -445,9 +563,37 @@ class BoraWindow(Adw.ApplicationWindow):
 
         return box
 
+    # ── 설정·기록 ────────────────────────────────────────────────────────
+    def _apply_settings(self) -> None:
+        st = self.state.settings
+        self.player.speed = st.speed
+        self.player.volume = st.volume
+        self.player.set_sub_style(font=st.sub_font, size=st.sub_font_size, color=st.sub_color)
+
+    def _remember_position(self) -> bool:
+        """지금 보고 있는 위치를 기록한다. 30초마다, 그리고 파일 전환·종료 때."""
+        if self._current is not None:
+            pos, dur = self.player.time_pos, self.player.duration
+            if pos is not None and dur:
+                self.state.note_playback(self._current, pos, dur,
+                                         title=self._current.name)
+                self.state.save()
+        return True
+
+    def _offer_resume(self, path: Path) -> None:
+        """이어볼 위치가 있으면 토스트로 묻는다. 몇 초 안에 답이 없으면 처음부터 본다."""
+        position = self.state.resume_for(path)
+        if position is None:
+            return
+        toast = Adw.Toast(title=f"{_fmt_time(position)} 부터 이어 볼까요?", timeout=8)
+        toast.set_button_label("이어보기")
+        toast.connect("button-clicked", lambda *_: self.player.seek_absolute(position))
+        self._toasts.add_toast(toast)
+
     # ── 동작 ─────────────────────────────────────────────────────────────
     def open_path(self, path: Path | str, subtitle: Path | None = None) -> None:
         path = Path(path)
+        self._remember_position()          # 넘어가기 전에 지금 파일 위치를 남긴다
         try:
             self._plan = prepare_for_video(path, self._cache_base, subtitle)
         except Exception as exc:                    # 자막 준비 실패가 재생을 막으면 안 된다
@@ -462,6 +608,8 @@ class BoraWindow(Adw.ApplicationWindow):
         GLib.timeout_add(300, self._refresh_subtitle_menu_once)
         if self._plan is not None:
             self.toast(f"자막: {self._plan.summary()}")
+        # 길이를 알아야 이어볼지 판단할 수 있다. 파일이 열린 뒤에 묻는다.
+        GLib.timeout_add(600, lambda: (self._offer_resume(path), False)[1])
 
     def _refresh_subtitle_menu_once(self) -> bool:
         self._rebuild_subtitle_menu()
@@ -521,5 +669,10 @@ class BoraWindow(Adw.ApplicationWindow):
         return True
 
     def _on_close(self, *_args) -> bool:
+        self._remember_position()
+        self.state.settings.speed = self.player.speed
+        self.state.settings.volume = self.player.volume
+        self.state.settings.sub_font_size = self.player.sub_font_size
+        self.state.save()
         self.player.close()
         return False
