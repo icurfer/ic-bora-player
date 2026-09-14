@@ -33,9 +33,37 @@ gi.require_version("Gdk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 
+import bora.player as player_mod  # noqa: E402
 from bora.app import BoraApplication  # noqa: E402
 
+# 렌더 횟수를 센다 — 창 크기가 바뀐 뒤 다시 그려지는지 확인하려고.
+_orig_render = player_mod.Player.render
+
+
+def _counting_render(self, w, h, fbo):
+    state["renders"] += 1
+    return _orig_render(self, w, h, fbo)
+
+
+player_mod.Player.render = _counting_render
+
 results: list[tuple[str, bool, str]] = []
+state = {"renders": 0}
+
+
+def wait_until(cond, timeout: float) -> bool:
+    """메인 루프를 돌리며 조건이 참이 되기를 기다린다."""
+    import time
+
+    ctx = GLib.MainContext.default()
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        while ctx.pending():
+            ctx.iteration(False)
+        if cond():
+            return True
+        time.sleep(0.05)
+    return bool(cond())
 
 
 def check(name: str, ok: bool, detail: str = "") -> None:
@@ -106,12 +134,33 @@ def main() -> int:
                       f"duration={p.duration}")
                 win.toggle_pause()       # 다시 재생
 
-                # 전체화면
+                # 전체화면 — fullscreen() 은 비동기라 상태가 반영될 때까지 기다린다
+                renders_before = state["renders"]
                 win.set_fullscreen(True)
+                wait_until(lambda: win.is_fullscreen(), 3.0)
+                check("전체화면 상태 진입", win.is_fullscreen())
                 icon_fs = win._fs_button.get_icon_name()
-                win.set_fullscreen(False)
+                check("전체화면 진입 직후엔 UI 가 보인다",
+                      win._header.get_visible() and win._controls.get_visible())
+                check("크기 변경 뒤 다시 그린다(검은 화면 방지)",
+                      state["renders"] > renders_before,
+                      f"렌더 {renders_before} -> {state['renders']}")
+                win._hide_ui()          # 타이머가 할 일을 당겨서 실행
+                check("전체화면에서 헤더바·컨트롤이 감춰진다",
+                      not win._header.get_visible() and not win._controls.get_visible(),
+                      f"header={win._header.get_visible()}, controls={win._controls.get_visible()}")
+                win._on_motion(None, 0, 0)
+                check("마우스를 움직이면 다시 보인다",
+                      win._header.get_visible() and win._controls.get_visible())
+
+                # 창 관리자가 직접 되돌리는 경우 — set_fullscreen 을 거치지 않는다
+                win.unfullscreen()
+                wait_until(lambda: not win.is_fullscreen(), 3.0)
                 icon_normal = win._fs_button.get_icon_name()
                 check("전체화면 버튼 아이콘 전환", icon_fs != icon_normal, f"{icon_fs} / {icon_normal}")
+                check("창 관리자로 나와도 UI 가 돌아온다",
+                      win._header.get_visible() and win._controls.get_visible(),
+                      f"header={win._header.get_visible()}, controls={win._controls.get_visible()}")
 
                 # 자막 싱크 단축키
                 win._nudge_sub_delay(0.3)

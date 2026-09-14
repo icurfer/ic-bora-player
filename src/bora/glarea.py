@@ -23,6 +23,7 @@ class MpvGLArea(Gtk.GLArea):
         self.set_auto_render(False)
         self.connect("realize", self._on_realize)
         self.connect("render", self._on_render)
+        self.connect("resize", self._on_resize)
         self.connect("unrealize", self._on_unrealize)
 
     def _on_realize(self, area: Gtk.GLArea) -> None:
@@ -42,6 +43,16 @@ class MpvGLArea(Gtk.GLArea):
         scale = area.get_scale_factor()
         self._player.render(area.get_width() * scale, area.get_height() * scale, current_fbo())
         return True
+
+    def _on_resize(self, _area: Gtk.GLArea, _w: int, _h: int) -> None:
+        """크기가 바뀌면 즉시 다시 그린다.
+
+        `set_auto_render(False)` 라 GTK 가 알아서 다시 그려 주지 않는다. libmpv 는 '새 프레임이
+        있을 때만' update_cb 를 부르므로, 일시정지 중이거나 프레임 사이에 창 크기가 바뀌면
+        **검은 화면이 그대로 남는다.** 전체화면을 오갈 때 실제로 이 증상이 났다.
+        """
+        if self._ready:
+            self.queue_render()
 
     def _on_unrealize(self, _area: Gtk.GLArea) -> None:
         self._ready = False

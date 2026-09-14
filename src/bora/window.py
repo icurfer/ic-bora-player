@@ -42,16 +42,19 @@ class BoraWindow(Adw.ApplicationWindow):
         self._current: Path | None = None
         self._cache_base = Path(GLib.get_user_cache_dir()) / "bora"
         self._track_buttons: list[Gtk.CheckButton] = []
+        self._hide_ui_id = 0            # 전체화면에서 UI 를 감출 타이머
 
         self._toasts = Adw.ToastOverlay()
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self._toasts.set_child(root)
         self.set_content(self._toasts)
 
-        root.append(self._build_header())
+        self._header = self._build_header()
+        root.append(self._header)
         self._video = MpvGLArea(self.player)
         root.append(self._video)
-        root.append(self._build_controls())
+        self._controls = self._build_controls()
+        root.append(self._controls)
 
         # 재생 위치는 폴링으로 갱신한다. mpv 의 time-pos 변화를 구독하면 초당 수십 번
         # 메인 루프로 넘어와 UI 가 불필요하게 바빠진다.
@@ -60,6 +63,8 @@ class BoraWindow(Adw.ApplicationWindow):
         # 창 자체에 붙인다 — 헤더바·컨트롤 위에 떨궈도 받아야 한다.
         self._setup_drop_target(self)
         self._setup_keys()
+        self._setup_motion()
+        self.connect("notify::fullscreened", self._on_fullscreen_changed)
         self.connect("close-request", self._on_close)
 
     # ── 입력 ─────────────────────────────────────────────────────────────
@@ -133,13 +138,68 @@ class BoraWindow(Adw.ApplicationWindow):
             self._sync_spin.set_value(self.player.sub_delay)
 
     # ── 전체화면 ─────────────────────────────────────────────────────────
+    # 전체화면인데 헤더바·컨트롤이 계속 떠 있으면 영상을 가린다.
+    # 평소에는 감추고, 마우스를 움직이면 잠깐 보여준 뒤 다시 감춘다.
+    UI_HIDE_DELAY = 3          # 초
+
+    def _setup_motion(self) -> None:
+        motion = Gtk.EventControllerMotion()
+        motion.connect("motion", self._on_motion)
+        self.add_controller(motion)
+
+    def _on_motion(self, _controller, _x, _y) -> None:
+        if self.is_fullscreen():
+            self._reveal_ui()
+
+    def _reveal_ui(self) -> None:
+        """UI 를 보이고, 잠시 뒤 다시 감추도록 예약한다."""
+        self._show_chrome(True)
+        self._cancel_hide()
+        self._hide_ui_id = GLib.timeout_add_seconds(self.UI_HIDE_DELAY, self._hide_ui)
+
+    def _hide_ui(self) -> bool:
+        self._hide_ui_id = 0
+        # 자막 메뉴를 열어 둔 채로 감추면 조작을 뺏는다.
+        if self.is_fullscreen() and not self._sub_popover.get_visible():
+            self._show_chrome(False)
+        return False
+
+    def _cancel_hide(self) -> None:
+        if self._hide_ui_id:
+            GLib.source_remove(self._hide_ui_id)
+            self._hide_ui_id = 0
+
+    def _show_chrome(self, visible: bool) -> None:
+        self._header.set_visible(visible)
+        self._controls.set_visible(visible)
+        # 감출 때는 마우스 커서도 같이 감춘다(영상 위에 남으면 거슬린다).
+        self.set_cursor(None if visible else Gdk.Cursor.new_from_name("none", None))
+
     def set_fullscreen(self, on: bool) -> None:
+        """요청만 한다. 실제 반영은 'fullscreened' 상태 변화에서 처리한다.
+
+        `fullscreen()` 은 비동기다 — 부른 직후에는 아직 전체화면이 아니다.
+        게다가 사용자가 제목표시줄·창 관리자 단축키로 바꾸면 이 함수는 아예 불리지 않는다.
+        그래서 **상태를 구독**해야 어느 경로로 바뀌든 UI 가 일관되게 따라간다.
+        """
         if on:
             self.fullscreen()
         else:
             self.unfullscreen()
+
+    def _on_fullscreen_changed(self, *_args) -> None:
+        on = self.is_fullscreen()
+        log.debug("전체화면 상태 변화: %s", on)
         self._fs_button.set_icon_name(
             "view-restore-symbolic" if on else "view-fullscreen-symbolic")
+        if on:
+            self._reveal_ui()          # 들어가자마자 감추지 않고 잠깐 보여준다
+        else:
+            self._cancel_hide()
+            self._show_chrome(True)
+        # 창 크기가 바뀌었다. auto-render 를 꺼 뒀으므로 직접 다시 그리지 않으면
+        # 다음 프레임이 올 때까지 검은 화면이 남는다(일시정지 중이면 영영 남는다).
+        self._video.queue_render()
 
     def toggle_fullscreen(self) -> None:
         self.set_fullscreen(not self.is_fullscreen())
