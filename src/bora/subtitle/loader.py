@@ -12,14 +12,29 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..log import get as get_logger
 from .detect import DetectResult, detect
 from .sami import Track, looks_like_sami, split_to_files
 
+log = get_logger("subtitle")
+
 # mpv 가 자동으로 찾아 주는 자막 확장자 가운데 우리가 다루는 것들
 SUB_SUFFIXES = (".smi", ".sami", ".srt", ".ass", ".ssa", ".sub", ".vtt")
+
+# 국내 자막에서 아주 흔한 결함: SAMI 를 SRT 로 변환할 때 종료 신호 `&nbsp;` 가
+# **텍스트로 그대로 남는다.** 그러면 그 큐가 화면에 '빈 칸'으로 찍혀서
+# 사용자에게는 "자막이 안 나온다"로 보인다.
+# (실측: 실제 영화 자막 2665 큐 중 1332 개(50%)가 이랬다 — research 5)
+#
+# 파일을 다시 쓰지 않고 mpv 의 `--sub-filter-regex` 로 그 줄을 통째로 버린다.
+# POSIX ERE 이고, 줄 전체가 엔티티·공백뿐일 때만 지운다.
+EMPTY_CUE_REGEX = r"^(&nbsp;|&#160;|&#xa0;|\s)*$"
+# 파일에 이 엔티티가 하나라도 있으면 필터를 켠다(없으면 켤 이유가 없다).
+_ENTITY_PROBE = re.compile(rb"&(nbsp|#160|#xa0);", re.I)
 
 
 @dataclass
@@ -30,6 +45,12 @@ class Plan:
     detect: DetectResult
     tracks: list[Track] = field(default_factory=list)
     fallback_stretch: bool = False
+    empty_cue_filter: bool = False      # `&nbsp;` 만 있는 큐를 버릴 것인가
+    empty_cue_count: int = 0            # 몇 개나 있었는지 (UI·로그용)
+
+    @property
+    def sub_filters(self) -> list[str]:
+        return [EMPTY_CUE_REGEX] if self.empty_cue_filter else []
 
     @property
     def codepage(self) -> str | None:
@@ -47,10 +68,13 @@ class Plan:
         """UI 상태 표시줄에 그대로 쓸 한 줄."""
         enc = self.detect.encoding.upper()
         badge = "" if self.detect.confident else " (추정)"
+        parts = [f"{enc}{badge}"]
         if self.tracks:
             langs = "/".join(t.lang for t in self.tracks)
-            return f"{enc}{badge} · 트랙 {len(self.tracks)}개 [{langs}]"
-        return f"{enc}{badge}"
+            parts.append(f"트랙 {len(self.tracks)}개 [{langs}]")
+        if self.empty_cue_filter:
+            parts.append(f"빈 큐 {self.empty_cue_count}개 정리")
+        return " · ".join(parts)
 
 
 def find_sidecar(video: Path) -> Path | None:
@@ -88,8 +112,15 @@ def prepare(video: Path, subtitle: Path, cache_base: Path) -> Plan:
     result = detect(raw)
     plan = Plan(source=subtitle, detect=result)
 
+    # SAMI 든 SRT 든, 엔티티만 있는 큐는 화면에 빈 칸으로 찍힌다. 먼저 센다.
+    hits = len(_ENTITY_PROBE.findall(raw))
+    if hits:
+        plan.empty_cue_filter = True
+        plan.empty_cue_count = hits
+    log.debug("자막 %s: %s (엔티티 큐 %d개)", subtitle.name, result.reason, hits)
+
     if not looks_like_sami(raw):
-        return plan                      # SRT/ASS 등은 인코딩 주입으로 끝난다
+        return plan                      # SRT/ASS 등은 인코딩 주입 + 필터로 끝난다
 
     outdir = cache_dir_for(video, cache_base)
     try:
@@ -111,5 +142,8 @@ def prepare_for_video(video: Path, cache_base: Path, explicit: Path | None = Non
     """영상에 딸린 자막을 찾아 계획을 세운다. 자막이 없으면 None."""
     subtitle = explicit or find_sidecar(video)
     if subtitle is None or not subtitle.is_file():
+        log.info("자막을 찾지 못했다: %s", video.name)
         return None
-    return prepare(video, subtitle, cache_base)
+    plan = prepare(video, subtitle, cache_base)
+    log.info("자막 계획: %s (%s)", plan.summary(), subtitle.name)
+    return plan

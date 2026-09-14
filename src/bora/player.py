@@ -17,8 +17,11 @@ from typing import Callable
 
 import mpv
 
+from .log import debug_enabled, get as get_logger, mpv_log_handler
 from .subtitle.sami import Track
 from .util.gl import get_proc_address
+
+log = get_logger("player")
 
 
 def _force_c_numeric() -> None:
@@ -38,16 +41,24 @@ def _force_c_numeric() -> None:
 class Player:
     """libmpv 인스턴스 하나와 그 렌더 컨텍스트를 소유한다."""
 
-    def __init__(self) -> None:
+    def __init__(self, debug: bool | None = None) -> None:
         _force_c_numeric()
-        self._mpv = mpv.MPV(
+        debug = debug_enabled() if debug is None else debug
+        options = dict(
             vo="libmpv",            # 렌더 컨텍스트로 직접 그린다
             hwdec="auto-safe",
-            really_quiet=True,
             keep_open="yes",        # 끝나도 창을 닫지 않는다
             osc=False,              # 자체 OSD 컨트롤을 쓰지 않는다. UI 는 우리가 그린다
             input_default_bindings=False,
         )
+        if debug:
+            # libmpv 로그를 파이썬 로거로 끌어온다 — 자막이 왜 저렇게 나오는지는
+            # mpv 가 무엇을 열고 어떤 코드페이지를 썼는지 봐야 안다.
+            options.update(log_handler=mpv_log_handler, loglevel="v")
+        else:
+            options.update(really_quiet=True)
+        self._mpv = mpv.MPV(**options)
+        log.debug("libmpv %s 시작 (debug=%s)", self._mpv.mpv_version, debug)
         self._ctx: mpv.MpvRenderContext | None = None
         self._update_cb: Callable[[], None] | None = None
 
@@ -85,12 +96,17 @@ class Player:
             self._mpv.sub_auto = "fuzzy"
             self._mpv.sub_codepage = "auto"
             self._mpv.sub_stretch_durations = False
+            self._set_sub_filters([])
         else:
             # 분리 트랙을 쓸 때는 원본 자막이 자동으로 붙지 않게 막는다(중복 트랙 방지).
             self._mpv.sub_auto = "no" if plan.split else "fuzzy"
             self._mpv.sub_codepage = plan.codepage or "auto"
             self._mpv.sub_stretch_durations = bool(plan.fallback_stretch)
+            self._set_sub_filters(plan.sub_filters)
 
+        log.info("열기: %s (codepage=%s, sub-auto=%s, 필터=%d개)",
+                 Path(path).name, self._mpv.sub_codepage, self._mpv.sub_auto,
+                 len(plan.sub_filters) if plan else 0)
         self._mpv.play(str(path))
 
         if plan is not None and plan.tracks:
@@ -98,6 +114,24 @@ class Player:
             for index, track in enumerate(plan.tracks):
                 # 첫 트랙(한국어가 앞에 오도록 정렬돼 있다)을 기본 선택한다.
                 self.add_sub(track, select=(index == 0))
+
+    def _set_sub_filters(self, patterns: list[str]) -> None:
+        """`--sub-filter-regex` 를 갈아 끼운다. 빈 목록이면 필터를 끈다."""
+        self._mpv.sub_filter_regex = list(patterns)
+        self._mpv.sub_filter_regex_enable = bool(patterns)
+
+    def stop(self) -> None:
+        """정지 — 처음으로 되돌리고 멈춘다. 파일은 열어 둔다(자막 트랙도 그대로).
+
+        국내 플레이어의 정지 버튼 관례를 따른다. mpv 의 'stop' 명령은 파일을 닫아 버려서
+        쓰지 않는다.
+        """
+        try:
+            self._mpv.seek(0, reference="absolute")
+        except (SystemError, OSError):
+            pass
+        self._mpv.pause = True
+        log.debug("정지: 처음으로 되돌림")
 
     def add_sub(self, track: Track, select: bool = False) -> None:
         """분리한 자막 트랙을 주입한다. 제목·언어까지 넘겨야 트랙 메뉴에 제대로 보인다."""

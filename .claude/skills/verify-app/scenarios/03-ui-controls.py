@@ -96,6 +96,16 @@ def main() -> int:
                 check("볼륨 조절", abs(p.volume - 80) < 1 and abs(win._vol_scale.get_value() - p.volume) < 1,
                       f"volume={p.volume}, slider={win._vol_scale.get_value()}")
 
+                # 정지 — 처음으로 되돌리고 멈춘다. 파일은 열린 채여야 한다.
+                p.seek_absolute(4)
+                win.stop()
+                pos = p.time_pos or 0
+                check("정지(처음으로 + 일시정지)", pos < 1.0 and p.paused,
+                      f"time_pos={pos:.2f}, paused={p.paused}")
+                check("정지 후에도 파일이 열려 있다", (p.duration or 0) > 0,
+                      f"duration={p.duration}")
+                win.toggle_pause()       # 다시 재생
+
                 # 전체화면
                 win.set_fullscreen(True)
                 icon_fs = win._fs_button.get_icon_name()

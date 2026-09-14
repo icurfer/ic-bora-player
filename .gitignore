@@ -12,3 +12,6 @@ dist/
 
 # 검증용 임시 자막·영상 (샘플은 tests/fixtures/ 에 둔다)
 /tmp-verify/
+
+# 실제 미디어 표본 (용량이 크다. 절대 커밋하지 않는다)
+/sample/

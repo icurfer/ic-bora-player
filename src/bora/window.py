@@ -16,8 +16,12 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
 
 from .glarea import MpvGLArea  # noqa: E402
+from .log import get as get_logger  # noqa: E402
 from .player import Player  # noqa: E402
 from .subtitle.loader import SUB_SUFFIXES, Plan, prepare_for_video  # noqa: E402
+
+
+log = get_logger("window")
 
 
 def _fmt_time(seconds: float | None) -> str:
@@ -100,6 +104,7 @@ class BoraWindow(Adw.ApplicationWindow):
         handlers = {
             Gdk.KEY_space: self.toggle_pause,
             Gdk.KEY_p: self.toggle_pause,
+            Gdk.KEY_s: self.stop,
             Gdk.KEY_f: self.toggle_fullscreen,
             Gdk.KEY_F11: self.toggle_fullscreen,
             Gdk.KEY_Escape: lambda: self.set_fullscreen(False),
@@ -218,9 +223,16 @@ class BoraWindow(Adw.ApplicationWindow):
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6,
                       margin_top=6, margin_bottom=6, margin_start=12, margin_end=12)
 
-        self._play_btn = Gtk.Button(icon_name="media-playback-start-symbolic")
+        self._play_btn = Gtk.Button(icon_name="media-playback-start-symbolic",
+                                    tooltip_text="재생/일시정지 (Space)")
         self._play_btn.connect("clicked", lambda *_: self.toggle_pause())
         box.append(self._play_btn)
+
+        # 정지: 처음으로 되돌리고 멈춘다. 파일은 열어 둔다(국내 플레이어 관례).
+        self._stop_btn = Gtk.Button(icon_name="media-playback-stop-symbolic",
+                                    tooltip_text="정지 — 처음으로 (S)")
+        self._stop_btn.connect("clicked", lambda *_: self.stop())
+        box.append(self._stop_btn)
 
         self._pos_label = Gtk.Label(label="--:--", width_chars=6)
         box.append(self._pos_label)
@@ -256,6 +268,7 @@ class BoraWindow(Adw.ApplicationWindow):
             self._plan = prepare_for_video(path, self._cache_base, subtitle)
         except Exception as exc:                    # 자막 준비 실패가 재생을 막으면 안 된다
             self._plan = None
+            log.exception("자막 준비 실패: %s", path)
             self.toast(f"자막을 읽지 못했다: {exc}")
         self.player.open(path, self._plan)
         self._current = path
@@ -289,6 +302,12 @@ class BoraWindow(Adw.ApplicationWindow):
     def toggle_pause(self) -> None:
         self.player.toggle_pause()
         self._sync_play_button()
+
+    def stop(self) -> None:
+        self.player.stop()
+        self._sync_play_button()
+        self._seek.set_value(0)
+        self._pos_label.set_label("00:00")
 
     def toast(self, text: str) -> None:
         self._toasts.add_toast(Adw.Toast(title=text))
