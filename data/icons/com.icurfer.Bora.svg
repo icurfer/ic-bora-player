@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Bora(보라) — 이름 그대로 보라색. 재생 삼각형 + 자막 줄. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#9b6dff"/>
+      <stop offset="1" stop-color="#6b3fd4"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="16" width="112" height="96" rx="14" fill="url(#g)"/>
+  <!-- 재생 -->
+  <path d="M52 44 L88 64 L52 84 Z" fill="#ffffff" opacity="0.95"/>
+  <!-- 자막 두 줄 — 이 프로젝트의 존재 이유 -->
+  <rect x="30" y="92" width="52" height="7" rx="3.5" fill="#ffffff" opacity="0.9"/>
+  <rect x="88" y="92" width="20" height="7" rx="3.5" fill="#ffffff" opacity="0.55"/>
+</svg>

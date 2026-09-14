@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Name=Bora
+GenericName=Media Player
+Name[ko]=보라
+GenericName[ko]=미디어 플레이어
+Comment=Korean subtitle friendly media player
+Comment[ko]=국내 자막(CP949·SAMI)을 제대로 다루는 미디어 플레이어
+Icon=com.icurfer.Bora
+Categories=AudioVideo;Video;Player;GTK;
+Keywords=video;player;subtitle;smi;sami;
+Keywords[ko]=영상;동영상;재생;자막;싱크;
+Terminal=false
+StartupNotify=true
+StartupWMClass=bora
+MimeType=video/mp4;video/x-matroska;video/x-msvideo;video/quicktime;video/webm;video/mpeg;video/x-flv;video/x-ms-wmv;application/x-matroska;

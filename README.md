@@ -29,6 +29,23 @@ Ubuntu **22.04 / 24.04 / 26.04** 를 모두 지원해야 한다. 이 제약이 �
 
 [`docs/README.md`](docs/README.md) — 4단계 문서 체계(요구 → 기획서 → 범위 → 보류 → 완료).
 
+## 실행
+
+```bash
+# 저장소에서 바로
+PYTHONPATH=src python3 -m bora <영상파일>
+
+# 앱 목록에 등록해서 쓰려면 (사용자 영역, sudo 불필요)
+bash scripts/install-desktop.sh      # 되돌리기: --remove
+bora <영상파일>                       # ~/.local/bin/bora 로 설치된다
+```
+
+필요한 패키지(26.04 기준):
+
+```bash
+sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 python3-mpv libmpv2
+```
+
 ## 개발 규율
 
 이 저장소는 [ic-praxis](https://github.com/icurfer/ic-praxis) 체계를 쓴다 — 적어 둔 규칙 중
