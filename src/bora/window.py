@@ -18,6 +18,7 @@ from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
 from .glarea import MpvGLArea  # noqa: E402
 from .log import get as get_logger  # noqa: E402
 from .player import Player  # noqa: E402
+from . import desktop as desktop_setup  # noqa: E402
 from .editor import EditorWindow  # noqa: E402
 from .state import State  # noqa: E402
 from .subtitle.loader import SUB_SUFFIXES, Plan, prepare_for_video  # noqa: E402
@@ -437,6 +438,20 @@ class BoraWindow(Adw.ApplicationWindow):
         shots.append(no_subs)
         box.append(shots)
 
+        box.append(Gtk.Separator(margin_top=4))
+        default_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        label = Gtk.Label(label="기본 영상 플레이어", xalign=0, hexpand=True)
+        default_row.append(label)
+        self._default_switch = Gtk.Switch(active=desktop_setup.is_default(), valign=Gtk.Align.CENTER)
+        self._default_switch.connect("state-set", self._on_default_toggled)
+        default_row.append(self._default_switch)
+        box.append(default_row)
+        if desktop_setup.app_info() is None:
+            hint = Gtk.Label(label="먼저 앱 등록이 필요하다: scripts/install-desktop.sh",
+                             xalign=0, wrap=True, css_classes=["dim-label"])
+            box.append(hint)
+            self._default_switch.set_sensitive(False)
+
         recent = self.state.recent_items()
         if recent:
             box.append(Gtk.Separator(margin_top=4))
@@ -487,6 +502,21 @@ class BoraWindow(Adw.ApplicationWindow):
         size = int(spin.get_value())
         self.player.set_sub_style(size=size)
         self.state.settings.sub_font_size = size
+
+    def _on_default_toggled(self, _switch, enable: bool) -> bool:
+        """기본 영상 플레이어를 Bora 로 하거나, 이전 프로그램으로 되돌린다."""
+        if enable:
+            # 바꾸기 전 값을 기억해 둬야 나중에 정확히 되돌릴 수 있다.
+            snapshot = desktop_setup.snapshot_defaults()
+            if snapshot:
+                self.state.settings.previous_defaults = snapshot
+        ok, message = desktop_setup.set_default(
+            enable, self.state.settings.previous_defaults)
+        self.state.save()
+        self.toast(message)
+        if not ok:
+            return True         # 실패하면 스위치를 되돌린다
+        return False
 
     def _on_recent_clicked(self, _button, path: str) -> None:
         self._more_popover.popdown()

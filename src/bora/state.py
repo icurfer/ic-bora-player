@@ -68,6 +68,8 @@ class Settings:
     sub_color: str = ""
     screenshot_dir: str = ""
     volume: float = 100.0
+    # 기본 영상 플레이어를 Bora 로 바꾸기 전의 값. 끌 때 정확히 되돌리려고 들고 있는다.
+    previous_defaults: dict = field(default_factory=dict)
 
 
 class State:
