@@ -18,6 +18,7 @@ gi.require_version("Gdk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, GLib, Gtk, Pango  # noqa: E402
 
+from ..ai import AskRunner, Question, ensure_ready as ai_ready  # noqa: E402
 from ..log import get as get_logger  # noqa: E402
 from .model import NoteDocument, format_stamp, parse_stamps  # noqa: E402
 
@@ -38,6 +39,7 @@ class NotePanel(Gtk.Box):
         self._save_id = 0
         self._loading = False
         self._last_line = -1
+        self._ask: AskRunner | None = None
 
         self.append(self._build_toolbar())
 
@@ -56,6 +58,9 @@ class NotePanel(Gtk.Box):
         motion = Gtk.EventControllerMotion()
         motion.connect("motion", self._on_motion)
         self._view.add_controller(motion)
+        keys = Gtk.EventControllerKey()
+        keys.connect("key-pressed", self._on_key)
+        self._view.add_controller(keys)
 
         scroll = Gtk.ScrolledWindow(child=self._view, vexpand=True, hexpand=True)
         self.append(scroll)
@@ -74,6 +79,11 @@ class NotePanel(Gtk.Box):
                           tooltip_text="화면 넣기 (Ctrl+Shift+S)")
         shot.connect("clicked", lambda *_: self.insert_screenshot())
         bar.append(shot)
+
+        self._ask_btn = Gtk.Button(icon_name="dialog-question-symbolic",
+                                   tooltip_text="이 줄을 물어보기 (Ctrl+Enter)")
+        self._ask_btn.connect("clicked", lambda *_: self.ask_current_line())
+        bar.append(self._ask_btn)
 
         bar.append(Gtk.Label(hexpand=True))
 
@@ -194,6 +204,98 @@ class NotePanel(Gtk.Box):
         cursor = self._buffer.get_iter_at_mark(self._buffer.get_insert())
         self._buffer.insert(cursor, f"\n![{format_stamp(self.window.player.time_pos)}]({rel})\n")
         self._retag()
+
+    # ── AI 질의 ──────────────────────────────────────────────────────────
+    # 자동으로 부르지 않는다. 돈이 나가는 기능은 사용자가 누를 때만 나간다(기획서 v0.3 §4-5).
+    def _on_key(self, _controller, keyval: int, _code: int, state) -> bool:
+        ctrl = bool(state & Gdk.ModifierType.CONTROL_MASK)
+        if not ctrl:
+            return False
+        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+            self.ask_current_line()
+            return True
+        if keyval == Gdk.KEY_s:
+            self.save(force=True)
+            return True
+        if keyval == Gdk.KEY_t:
+            self.insert_stamp()
+            return True
+        return False
+
+    def _current_line_text(self) -> tuple[str, int]:
+        cursor = self._buffer.get_iter_at_mark(self._buffer.get_insert())
+        line = cursor.get_line()
+        start = self._buffer.get_iter_at_line(line)[1]
+        end = start.copy()
+        if not end.ends_line():
+            end.forward_to_line_end()
+        return self._buffer.get_text(start, end, True).strip(), line
+
+    def ask_current_line(self) -> bool:
+        """커서가 있는 줄을 질문으로 보낸다. 답은 그 아래 인용 블록으로 들어온다."""
+        if self._ask is not None and self._ask.running:
+            self.window.toast("이미 물어보는 중이다")
+            return False
+        ready, hint = ai_ready()
+        if not ready:
+            self.window.toast(hint.splitlines()[0])
+            log.info("AI 미준비: %s", hint.replace("\n", " / "))
+            return False
+
+        text, line = self._current_line_text()
+        question = text.lstrip("#> ").strip()       # 제목·인용 기호를 떼고 묻는다
+        if not question:
+            self.window.toast("물어볼 줄에 커서를 두어라")
+            return False
+
+        anchor = self._buffer.get_iter_at_line(line)[1]
+        if not anchor.ends_line():
+            anchor.forward_to_line_end()
+        self._buffer.insert(anchor, "\n\n> ")
+
+        self._ask = AskRunner(
+            on_delta=lambda t: GLib.idle_add(self._on_answer_delta, t),
+            on_done=lambda c, u: GLib.idle_add(self._on_answer_done, c, u),
+            on_error=lambda m: GLib.idle_add(self._on_answer_error, m),
+        )
+        job = Question(
+            text=question,
+            position=self.window.player.time_pos or 0.0,
+            video_title=self.window._current.stem if self.window._current else "",
+            subtitle_path=self.window._plan.source if self.window._plan else None,
+            note_text=self._text(),
+            note_line=line,
+            model=self.window.state.settings.ai_model,
+        )
+        if not self._ask.ask(job):
+            self._ask = None
+            return False
+        self._update_status("물어보는 중…")
+        return True
+
+    def _on_answer_delta(self, text: str) -> bool:
+        # 줄바꿈마다 '> ' 를 붙여 인용 블록을 이어 간다.
+        self._buffer.insert(self._buffer.get_end_iter(), text.replace("\n", "\n> "))
+        return False
+
+    def _on_answer_done(self, cost: float, usage: dict) -> bool:
+        self._ask = None
+        self._buffer.insert(self._buffer.get_end_iter(), "\n\n")
+        self._retag()
+        cached = usage.get("cache_read") or 0
+        note = f"답변 완료 · 약 ${cost:.4f}"
+        if cached:
+            note += f" (캐시 {cached:,}토큰 재사용)"
+        self._update_status(note)
+        self.window.toast(note)
+        self._schedule_autosave()
+        return False
+
+    def _on_answer_error(self, message: str) -> bool:
+        self._ask = None
+        self._update_status(f"질의 실패: {message[:60]}")
+        self.window.toast(f"AI: {message.splitlines()[0]}")
+        return False
 
     def _on_changed(self, _buffer) -> None:
         if self._loading or self.doc is None:

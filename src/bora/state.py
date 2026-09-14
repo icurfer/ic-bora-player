@@ -90,6 +90,7 @@ class Settings:
     sub_font: str = ""
     sub_color: str = ""
     sub_pos: float = 100.0          # 0 = 화면 위, 100 = 기본(아래)
+    ai_model: str = "claude-opus-5"
     screenshot_dir: str = ""
     volume: float = 100.0
     # 기본 영상 플레이어를 Bora 로 바꾸기 전의 값. 끌 때 정확히 되돌리려고 들고 있는다.

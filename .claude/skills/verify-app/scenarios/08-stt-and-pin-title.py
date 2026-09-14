@@ -28,6 +28,7 @@ from gi.repository import GLib  # noqa: E402
 
 from bora.app import BoraApplication  # noqa: E402
 from bora.state import State  # noqa: E402
+from bora.ai import ensure_ready as ai_ready  # noqa: E402
 from bora.stt import ensure_ready  # noqa: E402
 
 results: list[tuple[str, bool, str]] = []
@@ -126,6 +127,27 @@ def main() -> int:
                 check("P8 그래도 메모에는 남는다",
                       len(after.splitlines()) > lines_before,
                       f"{lines_before} -> {len(after.splitlines())}줄")
+
+                # A2 — AI 가 준비 안 됐을 때도 앱은 멀쩡해야 한다
+                ai_ok, ai_hint = ai_ready()
+                check("A2 AI 준비 상태를 판단한다", isinstance(ai_ok, bool),
+                      "준비됨" if ai_ok else ai_hint.splitlines()[0])
+                win.toggle_notes(True)
+                panel = win._notes
+                panel._buffer.insert(panel._buffer.get_end_iter(), "\nPaxos 와 Raft 차이?")
+                before = panel._text()
+                asked = panel.ask_current_line()
+                if ai_ok:
+                    check("A1 질의가 시작된다", asked)
+                else:
+                    check("A2 키 없으면 조용히 거절한다", asked is False)
+                    check("A2 메모를 건드리지 않는다", panel._text() == before,
+                          "그대로" if panel._text() == before else "바뀜")
+                    check("A2 안내가 뜬다",
+                          "API" in (win._last_toast_title or "")
+                          or "설치" in (win._last_toast_title or ""),
+                          win._last_toast_title or "(없음)")
+                check("A2 재생은 계속 정상", (p.duration or 0) > 0)
 
                 p.close()
                 self.quit()
