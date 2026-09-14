@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import gi
@@ -36,15 +37,14 @@ class NotePanel(Gtk.Box):
         self.doc: NoteDocument | None = None
         self._save_id = 0
         self._loading = False
+        self._last_line = -1
 
         self.append(self._build_toolbar())
 
         self._buffer = Gtk.TextBuffer()
         self._buffer.connect("changed", self._on_changed)
-        self._buffer.create_tag(self.STAMP_TAG,
-                                foreground="#7a5af8", underline=Pango.Underline.SINGLE)
-        # 제목 줄(## ...)을 살짝 굵게 — 문법 강조는 이 정도만 한다(의존성을 늘리지 않는다)
-        self._buffer.create_tag("heading", weight=Pango.Weight.BOLD)
+        self._buffer.connect("mark-set", self._on_mark_set)
+        self._make_tags()
 
         self._view = Gtk.TextView(
             buffer=self._buffer, wrap_mode=Gtk.WrapMode.WORD_CHAR, monospace=False,
@@ -105,8 +105,15 @@ class NotePanel(Gtk.Box):
         self._buffer.place_cursor(self._buffer.get_end_iter())
 
     def _text(self) -> str:
+        """버퍼의 **원본** 내용.
+
+        ⚠ 세 번째 인자(`include_hidden_chars`)는 반드시 True 여야 한다. 라이브 프리뷰가
+           마크업 문자(`#`, `**`)에 invisible 태그를 붙이는데, False 로 읽으면 **그 문자가
+           빠진 채로 돌아온다** — 그대로 저장하면 파일에서 `#` 이 사라진다(실제로 겪었다).
+           보이는 것만 바뀌어야 하고 파일 내용은 절대 손대지 않는다.
+        """
         start, end = self._buffer.get_bounds()
-        return self._buffer.get_text(start, end, False)
+        return self._buffer.get_text(start, end, True)
 
     def save(self, force: bool = False) -> bool:
         if self.doc is None:
@@ -183,26 +190,126 @@ class NotePanel(Gtk.Box):
         self.save()
         return False
 
-    # ── 타임스탬프 ───────────────────────────────────────────────────────
+    # ── 라이브 프리뷰 ────────────────────────────────────────────────────
+    # `#` 같은 마크업 문자를 그대로 보여 주면 메모하기 불편하다. 커서가 없는 줄은
+    # 마크업을 **감추고** 스타일만 보여 주고, 커서가 간 줄은 원본을 드러낸다
+    # (Obsidian 의 라이브 프리뷰와 같은 방식). 파일 내용은 손대지 않는다 — 보이는 것만 다르다.
+    HEADING_SCALES = {1: 1.7, 2: 1.35, 3: 1.15, 4: 1.05, 5: 1.0, 6: 1.0}
+    _INLINE = (
+        ("bold", re.compile(r"(\*\*)(?!\s)(.+?)(?<!\s)(\*\*)")),
+        ("italic", re.compile(r"(?<!\*)(\*)(?!\s|\*)(.+?)(?<!\s|\*)(\*)(?!\*)")),
+        ("code", re.compile(r"(`)([^`\n]+)(`)")),
+        ("strike", re.compile(r"(~~)(.+?)(~~)")),
+    )
+    _BULLET = re.compile(r"^(\s*)([-*+])(\s+)")
+    _QUOTE = re.compile(r"^(>\s?)")
+
+    def _make_tags(self) -> None:
+        b = self._buffer
+        b.create_tag(self.STAMP_TAG, foreground="#7a5af8",
+                     underline=Pango.Underline.SINGLE)
+        b.create_tag("hidden", invisible=True)          # 마크업 문자를 감춘다
+        for level, scale in self.HEADING_SCALES.items():
+            b.create_tag(f"h{level}", scale=scale, weight=Pango.Weight.BOLD,
+                         pixels_above_lines=10, pixels_below_lines=4)
+        b.create_tag("bold", weight=Pango.Weight.BOLD)
+        b.create_tag("italic", style=Pango.Style.ITALIC)
+        b.create_tag("code", family="monospace", background="#00000014")
+        b.create_tag("strike", strikethrough=True)
+        b.create_tag("quote", style=Pango.Style.ITALIC, foreground="#6b7280",
+                     left_margin=28)
+        b.create_tag("bullet", foreground="#7a5af8", weight=Pango.Weight.BOLD)
+
+    def _cursor_line(self) -> int:
+        it = self._buffer.get_iter_at_mark(self._buffer.get_insert())
+        return it.get_line()
+
+    def _hide(self, start: int, end: int) -> None:
+        """마크업 문자를 감춘다. 길이가 0이면 아무 일도 하지 않는다."""
+        if end <= start:
+            return
+        a = self._buffer.get_iter_at_offset(start)
+        b = self._buffer.get_iter_at_offset(end)
+        self._buffer.apply_tag_by_name("hidden", a, b)
+
+    def _style(self, name: str, start: int, end: int) -> None:
+        if end <= start:
+            return
+        a = self._buffer.get_iter_at_offset(start)
+        b = self._buffer.get_iter_at_offset(end)
+        self._buffer.apply_tag_by_name(name, a, b)
+
     def _retag(self) -> None:
-        """타임스탬프와 제목 줄에 태그를 다시 입힌다."""
+        """전체를 다시 칠한다. 커서가 있는 줄만 마크업을 드러낸다."""
         text = self._text()
         start, end = self._buffer.get_bounds()
-        self._buffer.remove_tag_by_name(self.STAMP_TAG, start, end)
-        self._buffer.remove_tag_by_name("heading", start, end)
+        for name in ("hidden", "bold", "italic", "code", "strike", "quote", "bullet",
+                     self.STAMP_TAG, *[f"h{i}" for i in self.HEADING_SCALES]):
+            self._buffer.remove_tag_by_name(name, start, end)
 
-        for stamp in parse_stamps(text):
-            a = self._buffer.get_iter_at_offset(stamp.start)
-            b = self._buffer.get_iter_at_offset(stamp.end)
-            self._buffer.apply_tag_by_name(self.STAMP_TAG, a, b)
-
+        editing = self._cursor_line()
         offset = 0
-        for line in text.split("\n"):
-            if line.startswith("#"):
-                a = self._buffer.get_iter_at_offset(offset)
-                b = self._buffer.get_iter_at_offset(offset + len(line))
-                self._buffer.apply_tag_by_name("heading", a, b)
+        for lineno, line in enumerate(text.split("\n")):
+            reveal = (lineno == editing)        # 편집 중인 줄은 원본을 보여 준다
+            self._retag_line(line, offset, reveal)
             offset += len(line) + 1
+
+        # 타임스탬프는 어느 줄이든 늘 표시한다 — 클릭 대상이기 때문이다.
+        for stamp in parse_stamps(text):
+            self._style(self.STAMP_TAG, stamp.start, stamp.end)
+
+    def _retag_line(self, line: str, base: int, reveal: bool) -> None:
+        body_start = base
+
+        heading = re.match(r"^(#{1,6})(\s+)", line)
+        if heading:
+            level = len(heading.group(1))
+            marks = heading.end()
+            self._style(f"h{level}", base, base + len(line))
+            if not reveal:
+                self._hide(base, base + marks)
+            body_start = base + marks
+        else:
+            quote = self._QUOTE.match(line)
+            if quote:
+                self._style("quote", base, base + len(line))
+                if not reveal:
+                    self._hide(base, base + quote.end())
+                body_start = base + quote.end()
+            else:
+                bullet = self._BULLET.match(line)
+                if bullet:
+                    # 목록 기호는 감추지 않는다 — 파일에 그대로 있어야 하고, 보이는 편이 낫다.
+                    self._style("bullet", base + len(bullet.group(1)),
+                                base + len(bullet.group(1)) + 1)
+                    body_start = base + bullet.end()
+
+        for name, pattern in self._INLINE:
+            for m in pattern.finditer(line):
+                if base + m.start() < body_start:
+                    continue
+                self._style(name, base + m.start(2), base + m.end(2))
+                if not reveal:
+                    self._hide(base + m.start(1), base + m.end(1))
+                    self._hide(base + m.start(3), base + m.end(3))
+
+    def _on_mark_set(self, _buffer, _iter, mark: Gtk.TextMark) -> None:
+        """커서가 다른 줄로 가면 다시 칠한다 — 편집 중인 줄만 원본을 드러내야 한다."""
+        if self._loading or mark.get_name() != "insert":
+            return
+        line = self._cursor_line()
+        if line == self._last_line:
+            return
+        self._last_line = line
+        # 태그 변경이 mark-set 안에서 일어나면 커서가 흔들린다. 한 박자 뒤로 미룬다.
+        GLib.idle_add(self._retag_idle)
+
+    def _retag_idle(self) -> bool:
+        if not self._loading:
+            self._retag()
+        return False
+
+    # ── 타임스탬프 ───────────────────────────────────────────────────────
 
     def _stamp_at(self, x: float, y: float):
         bx, by = self._view.window_to_buffer_coords(Gtk.TextWindowType.WIDGET, int(x), int(y))

@@ -59,6 +59,11 @@ class BoraWindow(Adw.ApplicationWindow):
         self._notes_open = False
         self._last_toast_title: str | None = None
 
+        # 하위 메뉴 팝오버. 부모는 하단 메뉴 버튼에 붙인다.
+        self._sub_popover = Gtk.Popover()
+        self._audio_popover = Gtk.Popover()
+        self._more_popover = Gtk.Popover()
+
         self._toasts = Adw.ToastOverlay()
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self._toasts.set_child(root)
@@ -334,6 +339,11 @@ class BoraWindow(Adw.ApplicationWindow):
 
     # ── 구성 ─────────────────────────────────────────────────────────────
     def _build_header(self) -> Gtk.Widget:
+        """제목·열기·상태만 둔다.
+
+        기능 버튼은 전부 하단 메뉴로 내렸다 — 헤더에 여섯 개까지 늘자 무엇이 무엇인지 알기
+        어려웠고, 전체화면에서 헤더를 감추면 손이 닿지 않았다. 하단 바는 재생 중에도 늘 보이는 자리다.
+        """
         header = Adw.HeaderBar()
         self._title = Adw.WindowTitle(title="Bora", subtitle="")
         header.set_title_widget(self._title)
@@ -345,40 +355,6 @@ class BoraWindow(Adw.ApplicationWindow):
         self._status = Gtk.Label(label="", css_classes=["dim-label"])
         header.pack_end(self._status)
 
-        # 자막 메뉴 — Adw.Dialog/PreferencesDialog 는 1.5+ 라 쓰지 않는다.
-        # MenuButton + Popover 는 GTK 4.0 부터 있어 22.04 에서도 그대로 돈다.
-        self._sub_button = Gtk.MenuButton(icon_name="media-view-subtitles-symbolic",
-                                          tooltip_text="자막 — 트랙 선택·싱크 (싱크: [ , ])")
-        self._sub_popover = Gtk.Popover()
-        self._sub_button.set_popover(self._sub_popover)
-        self._rebuild_subtitle_menu()
-        header.pack_end(self._sub_button)
-
-        # 오디오 트랙 — 영화에 코멘터리나 더빙이 따로 들어 있는 경우가 많다
-        self._audio_button = Gtk.MenuButton(icon_name="audio-x-generic-symbolic",
-                                            tooltip_text="오디오 트랙")
-        self._audio_popover = Gtk.Popover()
-        self._audio_button.set_popover(self._audio_popover)
-        self._rebuild_audio_menu()
-        header.pack_end(self._audio_button)
-
-        self._notes_btn = Gtk.ToggleButton(icon_name="view-dual-symbolic",
-                                           tooltip_text="학습 메모 (Ctrl+M)")
-        self._notes_btn.connect("toggled", self._on_notes_toggled)
-        header.pack_end(self._notes_btn)
-
-        edit_btn = Gtk.Button(icon_name="document-edit-symbolic",
-                              tooltip_text="자막 편집 (E) — 재생 위치를 그 줄에 박는다")
-        edit_btn.connect("clicked", lambda *_: self.open_editor())
-        header.pack_end(edit_btn)
-
-        self._more_button = Gtk.MenuButton(icon_name="open-menu-symbolic",
-                                           tooltip_text="속도·화면·스크린샷·최근 파일")
-        self._more_popover = Gtk.Popover()
-        self._more_button.set_popover(self._more_popover)
-        self._more_popover.connect("show", lambda *_: self._rebuild_more_menu())
-        self._rebuild_more_menu()
-        header.pack_end(self._more_button)
         return header
 
     # ── 더보기 메뉴 ──────────────────────────────────────────────────────
@@ -550,8 +526,6 @@ class BoraWindow(Adw.ApplicationWindow):
             want = False
         self._notes_open = want
         self._notes.set_visible(want)
-        if self._notes_btn.get_active() != want:
-            self._notes_btn.set_active(want)
         if want:
             if self._notes.doc is None or self._notes.doc.path != NoteDocument.path_for(self._current):
                 self._notes.load_for(self._current, self._current.stem)
@@ -562,10 +536,6 @@ class BoraWindow(Adw.ApplicationWindow):
         else:
             self._notes.save()
         log.debug("메모 패널: %s", want)
-
-    def _on_notes_toggled(self, button: Gtk.ToggleButton) -> None:
-        if button.get_active() != self._notes_open:
-            self.toggle_notes(button.get_active())
 
     # ── 자막 편집 ────────────────────────────────────────────────────────
     def open_editor(self) -> EditorWindow | None:
@@ -654,6 +624,74 @@ class BoraWindow(Adw.ApplicationWindow):
             return None
         self.toast(f"스크린샷 저장: {path}")
         return path
+
+    # ── 하나로 모은 메뉴 (하단 바) ───────────────────────────────────────
+    def _menu_row(self, label: str, accel: str, handler, subtitle: str = "") -> Gtk.Widget:
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
+        text.append(Gtk.Label(label=label, xalign=0))
+        if subtitle:
+            text.append(Gtk.Label(label=subtitle, xalign=0, css_classes=["dim-label"]))
+        row.append(text)
+        if accel:
+            row.append(Gtk.Label(label=accel, css_classes=["dim-label"], xalign=1))
+        button = Gtk.Button(child=row, has_frame=False)
+        button.connect("clicked", lambda _b: self._run_menu_item(handler))
+        return button
+
+    def _run_menu_item(self, handler) -> None:
+        self._main_popover.popdown()
+        handler()
+
+    def _rebuild_main_menu(self) -> None:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2,
+                      margin_top=8, margin_bottom=8, margin_start=8, margin_end=8,
+                      width_request=300)
+
+        box.append(self._menu_row("자막", "", self._show_subtitle_menu,
+                                  self._plan.summary() if self._plan else "자막 없음"))
+        audio = self.player.audio_tracks
+        box.append(self._menu_row("오디오 트랙", "", self._show_audio_menu,
+                                  f"{len(audio)}개" if audio else "없음"))
+        box.append(Gtk.Separator(margin_top=4, margin_bottom=4))
+
+        box.append(self._menu_row("학습 메모", "M", self.toggle_notes,
+                                  "열려 있다" if self._notes_open else "영상 옆 .md 에 기록"))
+        box.append(self._menu_row("자막 편집", "E", self.open_editor,
+                                  "재생 위치를 그 줄에 박는다"))
+        box.append(Gtk.Separator(margin_top=4, margin_bottom=4))
+
+        box.append(self._menu_row("화면·속도·자막 모양", "", self._show_more_menu,
+                                  f"{self.player.speed:g}x"))
+        box.append(self._menu_row("스크린샷", "C", lambda: self.take_screenshot(True)))
+        box.append(self._menu_row("파일 열기", "O", self.choose_file))
+
+        recent = self.state.recent_items()
+        if recent:
+            box.append(Gtk.Separator(margin_top=4, margin_bottom=4))
+            box.append(Gtk.Label(label="최근 파일", xalign=0, margin_start=6,
+                                 css_classes=["dim-label"]))
+            for item in recent[:5]:
+                box.append(self._menu_row(item.title, "",
+                                          lambda p=item.path: self.open_path(Path(p))))
+        self._main_popover.set_child(box)
+
+    def _popup_submenu(self, popover: Gtk.Popover, build) -> None:
+        """하위 메뉴를 메뉴 버튼 자리에 띄운다."""
+        build()
+        if popover.get_parent() is None:
+            popover.set_parent(self._menu_button)
+            popover.set_position(Gtk.PositionType.TOP)
+        popover.popup()
+
+    def _show_subtitle_menu(self) -> None:
+        self._popup_submenu(self._sub_popover, self._rebuild_subtitle_menu)
+
+    def _show_audio_menu(self) -> None:
+        self._popup_submenu(self._audio_popover, self._rebuild_audio_menu)
+
+    def _show_more_menu(self) -> None:
+        self._popup_submenu(self._more_popover, self._rebuild_more_menu)
 
     def _rebuild_audio_menu(self) -> None:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
@@ -770,6 +808,13 @@ class BoraWindow(Adw.ApplicationWindow):
         vol.set_tooltip_text("볼륨 (위/아래 화살표)")
         box.append(Gtk.Image(icon_name="audio-volume-high-symbolic"))
         box.append(vol)
+
+        self._menu_button = Gtk.MenuButton(icon_name="open-menu-symbolic",
+                                           tooltip_text="메뉴 — 자막·오디오·메모·화면")
+        self._main_popover = Gtk.Popover()
+        self._menu_button.set_popover(self._main_popover)
+        self._main_popover.connect("show", lambda *_: self._rebuild_main_menu())
+        box.append(self._menu_button)
 
         self._fs_button = Gtk.Button(icon_name="view-fullscreen-symbolic",
                                      tooltip_text="전체화면 (F)")

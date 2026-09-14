@@ -202,9 +202,25 @@ def main() -> int:
 
                 # 툴팁에 단축키가 적혀 있다
                 tips = [win._play_btn.get_tooltip_text(), win._stop_btn.get_tooltip_text(),
-                        win._fs_button.get_tooltip_text(), win._sub_button.get_tooltip_text()]
+                        win._fs_button.get_tooltip_text()]
                 check("버튼 툴팁에 단축키 표기", all(t and any(k in t for k in "()[]") for t in tips),
                       " / ".join(str(t) for t in tips))
+
+                # 헤더바를 비우고 하단 메뉴 하나로 모았다
+                win._rebuild_main_menu()
+                menu = win._main_popover.get_child()
+                labels = []
+                row = menu.get_first_child() if menu else None
+                while row is not None:
+                    if isinstance(row, Gtk.Button):
+                        inner = row.get_child().get_first_child()
+                        first = inner.get_first_child() if inner else None
+                        if first is not None:
+                            labels.append(first.get_label())
+                    row = row.get_next_sibling()
+                check("하단 메뉴에 기능이 모인다", len(labels) >= 7, f"{labels[:5]}")
+                for want in ("자막", "오디오 트랙", "학습 메모", "자막 편집"):
+                    check(f"메뉴에 '{want}'", want in labels)
 
                 # 드롭 — 자막만 떨구면 현재 영상에 붙는다
                 ok = win.open_dropped([sub])
