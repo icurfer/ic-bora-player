@@ -20,6 +20,7 @@ from .log import get as get_logger  # noqa: E402
 from .player import Player  # noqa: E402
 from . import desktop as desktop_setup  # noqa: E402
 from .editor import EditorWindow  # noqa: E402
+from .notes import NoteDocument, NotePanel  # noqa: E402
 from .state import State  # noqa: E402
 from .subtitle.loader import SUB_SUFFIXES, Plan, prepare_for_video  # noqa: E402
 from .tracks import track_label  # noqa: E402
@@ -55,6 +56,7 @@ class BoraWindow(Adw.ApplicationWindow):
         self._resume_toast: Adw.Toast | None = None
         self._save_state_id = 0
         self._editor: EditorWindow | None = None
+        self._notes_open = False
         self._last_toast_title: str | None = None
 
         self._toasts = Adw.ToastOverlay()
@@ -74,7 +76,15 @@ class BoraWindow(Adw.ApplicationWindow):
         root.append(self._header_revealer)
 
         self._video = MpvGLArea(self.player)
-        root.append(self._video)
+        # 영상 | 메모. 메모를 접으면 영상이 전부 차지한다.
+        self._paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL,
+                                vexpand=True, resize_start_child=True,
+                                shrink_start_child=False, shrink_end_child=False)
+        self._paned.set_start_child(self._video)
+        self._notes = NotePanel(self)
+        self._paned.set_end_child(self._notes)
+        self._notes.set_visible(False)          # 기본은 접어 둔다
+        root.append(self._paned)
 
         self._controls = self._build_controls()
         self._controls_revealer = Gtk.Revealer(
@@ -157,6 +167,7 @@ class BoraWindow(Adw.ApplicationWindow):
             Gdk.KEY_c: lambda: self.take_screenshot(True),
             Gdk.KEY_C: lambda: self.take_screenshot(False),   # Shift+C — 자막 없이
             Gdk.KEY_e: self.open_editor,
+            Gdk.KEY_m: self.toggle_notes,
             Gdk.KEY_bracketleft: lambda: self._nudge_sub_delay(-0.1),
             Gdk.KEY_bracketright: lambda: self._nudge_sub_delay(0.1),
             Gdk.KEY_comma: lambda: self._nudge_speed(-0.25),
@@ -230,6 +241,7 @@ class BoraWindow(Adw.ApplicationWindow):
             ("자막 싱크 +0.1초", "]", lambda: self._nudge_sub_delay(0.1)),
             (None, None, None),
             ("전체화면 나가기" if self.is_fullscreen() else "전체화면", "F", self.toggle_fullscreen),
+            ("학습 메모", "Ctrl+M" if False else "M", self.toggle_notes),
             ("자막 편집", "E", self.open_editor),
             ("스크린샷 저장", "C", lambda: self.take_screenshot(True)),
             ("파일 열기", "O", self.choose_file),
@@ -281,6 +293,9 @@ class BoraWindow(Adw.ApplicationWindow):
     def _show_chrome(self, visible: bool) -> None:
         self._header_revealer.set_reveal_child(visible)
         self._controls_revealer.set_reveal_child(visible)
+        # 전체화면에서 영상을 가리지 않게 메모도 함께 접는다(내용은 그대로 있다).
+        if self.is_fullscreen():
+            self._notes.set_visible(visible and self._notes_open)
         # 감출 때는 마우스 커서도 같이 감춘다(영상 위에 남으면 거슬린다).
         self.set_cursor(None if visible else Gdk.Cursor.new_from_name("none", None))
 
@@ -346,6 +361,11 @@ class BoraWindow(Adw.ApplicationWindow):
         self._audio_button.set_popover(self._audio_popover)
         self._rebuild_audio_menu()
         header.pack_end(self._audio_button)
+
+        self._notes_btn = Gtk.ToggleButton(icon_name="view-dual-symbolic",
+                                           tooltip_text="학습 메모 (Ctrl+M)")
+        self._notes_btn.connect("toggled", self._on_notes_toggled)
+        header.pack_end(self._notes_btn)
 
         edit_btn = Gtk.Button(icon_name="document-edit-symbolic",
                               tooltip_text="자막 편집 (E) — 재생 위치를 그 줄에 박는다")
@@ -521,6 +541,31 @@ class BoraWindow(Adw.ApplicationWindow):
     def _on_recent_clicked(self, _button, path: str) -> None:
         self._more_popover.popdown()
         self.open_path(Path(path))
+
+    # ── 학습 메모 ────────────────────────────────────────────────────────
+    def toggle_notes(self, show: bool | None = None) -> None:
+        want = (not self._notes_open) if show is None else bool(show)
+        if want and self._current is None:
+            self.toast("영상을 먼저 열어라")
+            want = False
+        self._notes_open = want
+        self._notes.set_visible(want)
+        if self._notes_btn.get_active() != want:
+            self._notes_btn.set_active(want)
+        if want:
+            if self._notes.doc is None or self._notes.doc.path != NoteDocument.path_for(self._current):
+                self._notes.load_for(self._current, self._current.stem)
+            # 처음 열 때 절반쯤 차지하게 둔다
+            if self._paned.get_position() <= 0:
+                self._paned.set_position(max(360, self.get_width() - 380))
+            self._notes.focus_editor()
+        else:
+            self._notes.save()
+        log.debug("메모 패널: %s", want)
+
+    def _on_notes_toggled(self, button: Gtk.ToggleButton) -> None:
+        if button.get_active() != self._notes_open:
+            self.toggle_notes(button.get_active())
 
     # ── 자막 편집 ────────────────────────────────────────────────────────
     def open_editor(self) -> EditorWindow | None:
@@ -772,8 +817,12 @@ class BoraWindow(Adw.ApplicationWindow):
             self._plan = None
             log.exception("자막 준비 실패: %s", path)
             self.toast(f"자막을 읽지 못했다: {exc}")
+        if self._notes_open:
+            self._notes.save()
         self.player.open(path, self._plan)
         self._current = path
+        if self._notes_open:
+            self._notes.load_for(path, path.stem)
         self._title.set_title(path.name)
         self._title.set_subtitle(str(path.parent))
         # 트랙 주입 직후에는 track_list 가 아직 안 채워져 있을 수 있다. 한 박자 뒤에 그린다.
@@ -842,6 +891,7 @@ class BoraWindow(Adw.ApplicationWindow):
         return True
 
     def _on_close(self, *_args) -> bool:
+        self._notes.save()
         self._remember_position()
         self.state.settings.speed = self.player.speed
         self.state.settings.volume = self.player.volume
