@@ -54,6 +54,7 @@ class BoraWindow(Adw.ApplicationWindow):
         self._resume_toast: Adw.Toast | None = None
         self._save_state_id = 0
         self._editor: EditorWindow | None = None
+        self._last_toast_title: str | None = None
 
         self._toasts = Adw.ToastOverlay()
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -153,6 +154,7 @@ class BoraWindow(Adw.ApplicationWindow):
             Gdk.KEY_bracketright: lambda: self._nudge_sub_delay(0.1),
             Gdk.KEY_o: self.choose_file,
             Gdk.KEY_c: lambda: self.take_screenshot(True),
+            Gdk.KEY_C: lambda: self.take_screenshot(False),   # Shift+C — 자막 없이
             Gdk.KEY_e: self.open_editor,
             Gdk.KEY_bracketleft: lambda: self._nudge_sub_delay(-0.1),
             Gdk.KEY_bracketright: lambda: self._nudge_sub_delay(0.1),
@@ -403,10 +405,37 @@ class BoraWindow(Adw.ApplicationWindow):
         size_row.append(spin)
         box.append(size_row)
 
+        # 글꼴 — Gtk.FontDialogButton 은 4.10+ 라 쓰지 않는다(22.04 는 GTK 4.6).
+        # 시스템에 있는 글꼴 이름을 직접 고르게 한다.
+        font_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        font_row.append(Gtk.Label(label="글꼴"))
+        fonts = self._font_choices()
+        self._font_drop = Gtk.DropDown.new_from_strings(fonts)
+        current_font = self.player.sub_font or ""
+        if current_font in fonts:
+            self._font_drop.set_selected(fonts.index(current_font))
+        self._font_drop.connect("notify::selected", self._on_font_changed)
+        self._font_drop.set_hexpand(True)
+        font_row.append(self._font_drop)
+        box.append(font_row)
+
+        color_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        color_row.append(Gtk.Label(label="색"))
+        for label, value in (("흰색", "#FFFFFFFF"), ("노랑", "#FFFFFF00"), ("연두", "#FFCCFF66")):
+            btn = Gtk.Button(label=label)
+            btn.connect("clicked", self._on_sub_color, value)
+            color_row.append(btn)
+        box.append(color_row)
+
         box.append(Gtk.Separator(margin_top=4))
-        shot = Gtk.Button(label="스크린샷 저장")
-        shot.connect("clicked", lambda *_: self.take_screenshot())
-        box.append(shot)
+        shots = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6, homogeneous=True)
+        with_subs = Gtk.Button(label="스크린샷 (자막 포함)")
+        with_subs.connect("clicked", lambda *_: self.take_screenshot(True))
+        shots.append(with_subs)
+        no_subs = Gtk.Button(label="자막 없이")
+        no_subs.connect("clicked", lambda *_: self.take_screenshot(False))
+        shots.append(no_subs)
+        box.append(shots)
 
         recent = self.state.recent_items()
         if recent:
@@ -425,6 +454,34 @@ class BoraWindow(Adw.ApplicationWindow):
             self.player.speed = value
             self.state.settings.speed = value
             self.toast(f"재생 속도 {value:g}x")
+
+    # 국내 자막에 흔히 쓰는 글꼴을 앞에 두고, 시스템에 실제로 있는 것만 보여 준다.
+    PREFERRED_FONTS = ("Noto Sans CJK KR", "Noto Sans KR", "NanumGothic", "NanumBarunGothic",
+                       "Pretendard", "Malgun Gothic", "Sans")
+
+    def _font_choices(self) -> list[str]:
+        available = set()
+        try:
+            ctx = self.get_pango_context()
+            available = {f.get_name() for f in ctx.list_families()}
+        except Exception:       # 글꼴 목록을 못 얻어도 기능 자체는 살아 있어야 한다
+            log.debug("글꼴 목록을 얻지 못했다")
+        names = [f for f in self.PREFERRED_FONTS if not available or f in available]
+        return names or ["Sans"]
+
+    def _on_font_changed(self, drop: Gtk.DropDown, _param) -> None:
+        model = drop.get_model()
+        index = drop.get_selected()
+        if model is None or index == Gtk.INVALID_LIST_POSITION:
+            return
+        name = model.get_string(index)
+        self.player.set_sub_style(font=name)
+        self.state.settings.sub_font = name
+        self.toast(f"자막 글꼴: {name}")
+
+    def _on_sub_color(self, _button, value: str) -> None:
+        self.player.set_sub_style(color=value)
+        self.state.settings.sub_color = value
 
     def _on_sub_size_changed(self, spin: Gtk.SpinButton) -> None:
         size = int(spin.get_value())
@@ -668,7 +725,9 @@ class BoraWindow(Adw.ApplicationWindow):
         position = self.state.resume_for(path)
         if position is None:
             return
-        toast = Adw.Toast(title=f"{_fmt_time(position)} 부터 이어 볼까요?", timeout=8)
+        title = f"{_fmt_time(position)} 부터 이어 볼까요?"
+        self._last_toast_title = title
+        toast = Adw.Toast(title=title, timeout=8)
         toast.set_button_label("이어보기")
         toast.connect("button-clicked", lambda *_: self.player.seek_absolute(position))
         self._toasts.add_toast(toast)
@@ -726,6 +785,7 @@ class BoraWindow(Adw.ApplicationWindow):
         self._pos_label.set_label("00:00")
 
     def toast(self, text: str) -> None:
+        self._last_toast_title = text      # 마지막 알림 — 로그·검증에서 확인할 수 있게 남긴다
         self._toasts.add_toast(Adw.Toast(title=text))
 
     # ── 갱신 ─────────────────────────────────────────────────────────────
@@ -756,6 +816,8 @@ class BoraWindow(Adw.ApplicationWindow):
         self.state.settings.speed = self.player.speed
         self.state.settings.volume = self.player.volume
         self.state.settings.sub_font_size = self.player.sub_font_size
+        self.state.settings.sub_font = self.player.sub_font
+        self.state.settings.sub_color = self.player.sub_color
         self.state.save()
         self.player.close()
         return False

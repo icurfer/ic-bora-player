@@ -128,6 +128,34 @@ def main() -> int:
                       reloaded.resume_for(video) is not None,
                       f"resume={reloaded.resume_for(video)}")
 
+                # S1 — 속도를 바꿔도 음정이 유지되어야 한다
+                check("S1 음정 유지 켜짐", p.pitch_correction, f"{p.pitch_correction}")
+
+                # S2 — 자막 없는 스크린샷
+                without = win.take_screenshot(include_subs=False)
+                check("S2 자막 없는 스크린샷",
+                      bool(without) and without.exists() and without.stat().st_size > 1000,
+                      f"{without}" if without else "실패")
+
+                # S3 — 자막 글꼴·크기가 설정에 남고 다시 읽힌다
+                fonts = win._font_choices()
+                check("글꼴 선택지가 있다", bool(fonts), f"{fonts[:3]}")
+                win._on_sub_color(None, "#FFFFFF00")
+                win.state.settings.sub_font_size = p.sub_font_size
+                win.state.settings.sub_color = p.sub_color
+                win.state.save()
+                again = State(cfg)
+                check("S3 자막 설정이 유지된다",
+                      again.settings.sub_font_size == 64 and again.settings.sub_color != "",
+                      f"size={again.settings.sub_font_size}, color={again.settings.sub_color}")
+
+                # R1 — 이어보기 제안이 실제로 토스트로 뜨는가
+                before = len(getattr(win, "_test_toasts", []))
+                win._offer_resume(video)
+                check("R1 이어보기 제안이 뜬다", win._last_toast_title is not None
+                      and "이어" in (win._last_toast_title or ""),
+                      f"{win._last_toast_title}")
+
                 # 더보기 메뉴가 그려지는가
                 win._rebuild_more_menu()
                 check("더보기 메뉴 구성", win._more_popover.get_child() is not None)

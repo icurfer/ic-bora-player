@@ -53,6 +53,7 @@ class Player:
             vo=vo,                  # 렌더 컨텍스트로 직접 그린다
             hwdec="auto-safe",
             keep_open="yes",        # 끝나도 창을 닫지 않는다
+            audio_pitch_correction=True,   # 속도를 바꿔도 목소리 음정이 유지된다
             osc=False,              # 자체 OSD 컨트롤을 쓰지 않는다. UI 는 우리가 그린다
             input_default_bindings=False,
         )
@@ -177,6 +178,18 @@ class Player:
     @property
     def sub_font_size(self) -> int:
         return int(self._mpv.sub_font_size or 0)
+
+    @property
+    def sub_font(self) -> str:
+        return str(self._mpv.sub_font or "")
+
+    @property
+    def sub_color(self) -> str:
+        return str(self._mpv.sub_color or "")
+
+    @property
+    def pitch_correction(self) -> bool:
+        return bool(self._mpv.audio_pitch_correction)
 
     def stop(self) -> None:
         """정지 — 처음으로 되돌리고 멈춘다. 파일은 열어 둔다(자막 트랙도 그대로).
