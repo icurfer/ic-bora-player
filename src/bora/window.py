@@ -13,11 +13,11 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
 
 from .glarea import MpvGLArea  # noqa: E402
 from .player import Player  # noqa: E402
-from .subtitle.loader import Plan, prepare_for_video  # noqa: E402
+from .subtitle.loader import SUB_SUFFIXES, Plan, prepare_for_video  # noqa: E402
 
 
 def _fmt_time(seconds: float | None) -> str:
@@ -35,6 +35,7 @@ class BoraWindow(Adw.ApplicationWindow):
         self.player = Player()
         self._seeking = False          # 사용자가 슬라이더를 잡고 있는 동안은 갱신하지 않는다
         self._plan: Plan | None = None
+        self._current: Path | None = None
         self._cache_base = Path(GLib.get_user_cache_dir()) / "bora"
         self._track_buttons: list[Gtk.CheckButton] = []
 
@@ -52,7 +53,91 @@ class BoraWindow(Adw.ApplicationWindow):
         # 메인 루프로 넘어와 UI 가 불필요하게 바빠진다.
         GLib.timeout_add(250, self._tick)
 
+        # 창 자체에 붙인다 — 헤더바·컨트롤 위에 떨궈도 받아야 한다.
+        self._setup_drop_target(self)
+        self._setup_keys()
         self.connect("close-request", self._on_close)
+
+    # ── 입력 ─────────────────────────────────────────────────────────────
+    def _setup_drop_target(self, widget: Gtk.Widget) -> None:
+        """창 어디에 떨궈도 열리게 한다. 영상과 자막을 함께 떨구는 것도 받는다."""
+        target = Gtk.DropTarget.new(Gdk.FileList, Gdk.DragAction.COPY)
+        target.connect("drop", self._on_drop)
+        widget.add_controller(target)
+
+    def _on_drop(self, _target, value, _x, _y) -> bool:
+        files = [Path(f.get_path()) for f in value.get_files() if f.get_path()]
+        if not files:
+            return False
+        self.open_dropped(files)
+        return True
+
+    def open_dropped(self, files: list[Path]) -> bool:
+        """떨어진 파일들을 영상/자막으로 갈라 연다.
+
+        자막만 떨구면 지금 재생 중인 영상에 붙인다 — 자막 이름이 다를 때의 구제 수단이다.
+        """
+        videos = [f for f in files if f.suffix.lower() not in SUB_SUFFIXES]
+        subs = [f for f in files if f.suffix.lower() in SUB_SUFFIXES]
+        if videos:
+            self.open_path(videos[0], subs[0] if subs else None)
+            return True
+        if subs and self._current is not None:
+            self.open_path(self._current, subs[0])
+            return True
+        if subs:
+            self.toast("영상을 먼저 연 뒤에 자막을 떨궈라")
+        return False
+
+    def _setup_keys(self) -> None:
+        keys = Gtk.EventControllerKey()
+        keys.connect("key-pressed", self._on_key)
+        self.add_controller(keys)
+
+    def _on_key(self, _c, keyval: int, _code: int, state: Gdk.ModifierType) -> bool:
+        if state & (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK):
+            return False
+        handlers = {
+            Gdk.KEY_space: self.toggle_pause,
+            Gdk.KEY_p: self.toggle_pause,
+            Gdk.KEY_f: self.toggle_fullscreen,
+            Gdk.KEY_F11: self.toggle_fullscreen,
+            Gdk.KEY_Escape: lambda: self.set_fullscreen(False),
+            Gdk.KEY_Left: lambda: self.player.seek_relative(-5),
+            Gdk.KEY_Right: lambda: self.player.seek_relative(5),
+            Gdk.KEY_Down: lambda: self._nudge_volume(-5),
+            Gdk.KEY_Up: lambda: self._nudge_volume(5),
+            Gdk.KEY_bracketleft: lambda: self._nudge_sub_delay(-0.1),
+            Gdk.KEY_bracketright: lambda: self._nudge_sub_delay(0.1),
+            Gdk.KEY_o: self.choose_file,
+        }
+        handler = handlers.get(keyval)
+        if handler is None:
+            return False
+        handler()
+        return True
+
+    def _nudge_volume(self, delta: float) -> None:
+        self.player.volume = self.player.volume + delta
+        self._vol_scale.set_value(self.player.volume)
+
+    def _nudge_sub_delay(self, delta: float) -> None:
+        self.player.sub_delay = self.player.sub_delay + delta
+        self.toast(f"자막 싱크 {self.player.sub_delay:+.1f}초")
+        if hasattr(self, "_sync_spin"):
+            self._sync_spin.set_value(self.player.sub_delay)
+
+    # ── 전체화면 ─────────────────────────────────────────────────────────
+    def set_fullscreen(self, on: bool) -> None:
+        if on:
+            self.fullscreen()
+        else:
+            self.unfullscreen()
+        self._fs_button.set_icon_name(
+            "view-restore-symbolic" if on else "view-fullscreen-symbolic")
+
+    def toggle_fullscreen(self) -> None:
+        self.set_fullscreen(not self.is_fullscreen())
 
     # ── 구성 ─────────────────────────────────────────────────────────────
     def _build_header(self) -> Gtk.Widget:
@@ -153,8 +238,14 @@ class BoraWindow(Adw.ApplicationWindow):
         vol.set_range(0, 100)
         vol.set_value(self.player.volume)
         vol.connect("value-changed", lambda s: setattr(self.player, "volume", s.get_value()))
+        self._vol_scale = vol
         box.append(Gtk.Image(icon_name="audio-volume-high-symbolic"))
         box.append(vol)
+
+        self._fs_button = Gtk.Button(icon_name="view-fullscreen-symbolic",
+                                     tooltip_text="전체화면 (F)")
+        self._fs_button.connect("clicked", lambda *_: self.toggle_fullscreen())
+        box.append(self._fs_button)
 
         return box
 
@@ -167,6 +258,7 @@ class BoraWindow(Adw.ApplicationWindow):
             self._plan = None
             self.toast(f"자막을 읽지 못했다: {exc}")
         self.player.open(path, self._plan)
+        self._current = path
         self._title.set_title(path.name)
         self._title.set_subtitle(str(path.parent))
         # 트랙 주입 직후에는 track_list 가 아직 안 채워져 있을 수 있다. 한 박자 뒤에 그린다.
