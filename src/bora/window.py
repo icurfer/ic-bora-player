@@ -19,6 +19,7 @@ from .glarea import MpvGLArea  # noqa: E402
 from .log import get as get_logger  # noqa: E402
 from .player import Player  # noqa: E402
 from .subtitle.loader import SUB_SUFFIXES, Plan, prepare_for_video  # noqa: E402
+from .tracks import track_label  # noqa: E402
 
 
 log = get_logger("window")
@@ -164,16 +165,31 @@ class BoraWindow(Adw.ApplicationWindow):
     # ── 우클릭 메뉴 ──────────────────────────────────────────────────────
     # 항목마다 단축키를 같이 보여준다. 전체화면에서 바를 감춘 동안에도 조작할 수 있어야 한다.
     def _setup_context_menu(self) -> None:
-        self._menu_popover = Gtk.Popover(has_arrow=False)
-        self._menu_popover.set_parent(self)
+        """영상 위젯에 붙인다.
+
+        ⚠ 창(self)에 붙이면 안 된다. `set_pointing_to` 의 좌표는 **팝오버 부모 위젯의 좌표계**인데
+        Adw.ApplicationWindow 는 내용물을 한 번 더 감싸고 있어서 제스처 좌표와 어긋난다.
+        그러면 메뉴가 클릭한 자리가 아니라 좌상단에 뜬다(전체화면에서는 화면 밖으로 밀려 안 보인다).
+        제스처와 팝오버를 **같은 위젯**에 붙여야 좌표계가 일치한다.
+        """
+        self._menu_popover = Gtk.Popover(has_arrow=False, position=Gtk.PositionType.BOTTOM)
+        self._menu_popover.set_parent(self._video)
         gesture = Gtk.GestureClick(button=Gdk.BUTTON_SECONDARY)
         gesture.connect("pressed", self._on_right_click)
-        self.add_controller(gesture)
+        self._video.add_controller(gesture)
 
     def _on_right_click(self, _gesture, _n: int, x: float, y: float) -> None:
         self._menu_popover.set_child(self._build_context_menu())
-        self._menu_popover.set_pointing_to(Gdk.Rectangle(x=int(x), y=int(y), width=1, height=1))
+        # 클릭한 점을 가리키게 한다. 폭·높이 1 짜리 사각형이면 그 지점에 붙는다.
+        #
+        # ⚠ `Gdk.Rectangle(x=..., y=...)` 처럼 생성자 키워드로 주면 **조용히 무시되어 (0,0)** 이 된다.
+        #    (boxed 구조체라 PyGObject 가 키워드를 필드에 넣어 주지 않는다.)
+        #    메뉴가 클릭한 자리가 아니라 좌상단에 뜨던 진짜 원인이었다. 필드에 직접 대입해야 한다.
+        rect = Gdk.Rectangle()
+        rect.x, rect.y, rect.width, rect.height = int(x), int(y), 1, 1
+        self._menu_popover.set_pointing_to(rect)
         self._menu_popover.popup()
+        log.debug("우클릭 메뉴: (%d, %d)", int(x), int(y))
 
     def _build_context_menu(self) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2,
@@ -296,7 +312,43 @@ class BoraWindow(Adw.ApplicationWindow):
         self._sub_button.set_popover(self._sub_popover)
         self._rebuild_subtitle_menu()
         header.pack_end(self._sub_button)
+
+        # 오디오 트랙 — 영화에 코멘터리나 더빙이 따로 들어 있는 경우가 많다
+        self._audio_button = Gtk.MenuButton(icon_name="audio-x-generic-symbolic",
+                                            tooltip_text="오디오 트랙")
+        self._audio_popover = Gtk.Popover()
+        self._audio_button.set_popover(self._audio_popover)
+        self._rebuild_audio_menu()
+        header.pack_end(self._audio_button)
         return header
+
+    def _rebuild_audio_menu(self) -> None:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
+                      margin_top=10, margin_bottom=10, margin_start=10, margin_end=10)
+        tracks = self.player.audio_tracks
+        if not tracks:
+            box.append(Gtk.Label(label="오디오 트랙 없음", css_classes=["dim-label"]))
+            self._audio_popover.set_child(box)
+            return
+
+        box.append(Gtk.Label(label=f"오디오 {len(tracks)}개", xalign=0, css_classes=["dim-label"]))
+        box.append(Gtk.Separator())
+        group = None
+        for track in tracks:
+            btn = Gtk.CheckButton(label=track_label(track))
+            if group is None:
+                group = btn
+            else:
+                btn.set_group(group)
+            if track.get("selected"):
+                btn.set_active(True)
+            btn.connect("toggled", self._on_audio_toggled, track["id"])
+            box.append(btn)
+        self._audio_popover.set_child(box)
+
+    def _on_audio_toggled(self, button: Gtk.CheckButton, track_id) -> None:
+        if button.get_active():
+            self.player.audio_id = track_id
 
     def _rebuild_subtitle_menu(self) -> None:
         """자막 트랙 목록과 싱크 조절을 다시 그린다."""
@@ -313,6 +365,7 @@ class BoraWindow(Adw.ApplicationWindow):
         self._track_buttons = []
         if tracks:
             box.append(Gtk.Separator())
+            box.append(Gtk.Label(label=f"자막 {len(tracks)}개", xalign=0, css_classes=["dim-label"]))
             group = None
             none_btn = Gtk.CheckButton(label="끄기")
             none_btn.connect("toggled", self._on_track_toggled, None)
@@ -320,8 +373,7 @@ class BoraWindow(Adw.ApplicationWindow):
             box.append(none_btn)
             self._track_buttons.append(none_btn)
             for track in tracks:
-                title = track.get("title") or track.get("lang") or f"트랙 {track['id']}"
-                btn = Gtk.CheckButton(label=str(title))
+                btn = Gtk.CheckButton(label=track_label(track))
                 btn.set_group(group)
                 if track.get("selected"):
                     btn.set_active(True)
@@ -413,6 +465,7 @@ class BoraWindow(Adw.ApplicationWindow):
 
     def _refresh_subtitle_menu_once(self) -> bool:
         self._rebuild_subtitle_menu()
+        self._rebuild_audio_menu()
         return False
 
     def choose_file(self) -> None:

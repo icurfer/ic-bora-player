@@ -179,10 +179,16 @@ def main() -> int:
                 # 우클릭 메뉴
                 has_right = any(
                     isinstance(c, Gtk.GestureClick) and c.get_button() == Gdk.BUTTON_SECONDARY
-                    for c in win.observe_controllers())
-                check("우클릭 제스처 연결", has_right)
-                win._on_right_click(None, 1, 10, 10)
+                    for c in win._video.observe_controllers())
+                check("우클릭 제스처가 영상 위젯에 연결", has_right)
+                check("팝오버 부모도 같은 위젯(좌표계 일치)",
+                      win._menu_popover.get_parent() is win._video,
+                      str(type(win._menu_popover.get_parent()).__name__))
+                win._on_right_click(None, 1, 321, 234)
                 check("우클릭 메뉴가 열린다", win._menu_popover.get_visible())
+                rect = win._menu_popover.get_pointing_to()[1]
+                check("클릭한 자리를 가리킨다(좌상단이 아니다)",
+                      rect.x == 321 and rect.y == 234, f"pointing_to=({rect.x},{rect.y})")
                 menu = win._menu_popover.get_child()
                 labels = []
                 row = menu.get_first_child()
@@ -214,7 +220,7 @@ def main() -> int:
                 self.quit()
                 return False
 
-        Probe().run([sys.argv[0], str(video)])
+        Probe(non_unique=True).run([sys.argv[0], str(video)])
     finally:
         shutil.rmtree(folder, ignore_errors=True)
 

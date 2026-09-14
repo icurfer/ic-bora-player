@@ -115,7 +115,7 @@ def child_main(video: str) -> int:
                 return False
             return True
 
-    Probe().run([sys.argv[0], video])
+    Probe(non_unique=True).run([sys.argv[0], video])
     out["seen"] = seen
     print(json.dumps(out, ensure_ascii=False))
     return 0

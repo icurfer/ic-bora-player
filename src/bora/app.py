@@ -15,8 +15,16 @@ from .window import BoraWindow  # noqa: E402
 
 
 class BoraApplication(Adw.Application):
-    def __init__(self) -> None:
-        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.HANDLES_OPEN)
+    def __init__(self, non_unique: bool = False) -> None:
+        """non_unique=True 면 이미 떠 있는 인스턴스와 합쳐지지 않고 제 창을 띄운다.
+
+        기본은 단일 인스턴스다 — 파일 관리자에서 두 번째 파일을 열면 같은 창에서 재생된다.
+        검증 시나리오는 사용자가 띄워 둔 창에 흡수되면 안 되므로 이 옵션을 쓴다.
+        """
+        flags = Gio.ApplicationFlags.HANDLES_OPEN
+        if non_unique:
+            flags |= Gio.ApplicationFlags.NON_UNIQUE
+        super().__init__(application_id=APP_ID, flags=flags)
         self._pending: list[Path] = []
 
     def do_activate(self) -> None:

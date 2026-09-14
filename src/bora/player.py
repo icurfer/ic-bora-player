@@ -142,6 +142,19 @@ class Player:
         return [t for t in self._mpv.track_list if t.get("type") == "sub"]
 
     @property
+    def audio_tracks(self) -> list[dict]:
+        return [t for t in self._mpv.track_list if t.get("type") == "audio"]
+
+    @property
+    def audio_id(self):
+        return self._mpv.aid
+
+    @audio_id.setter
+    def audio_id(self, value) -> None:
+        self._mpv.aid = value
+        log.debug("오디오 트랙 선택: %s", value)
+
+    @property
     def sub_id(self):
         return self._mpv.sid
 

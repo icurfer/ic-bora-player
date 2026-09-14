@@ -72,7 +72,7 @@ def main() -> int:
     if len(sys.argv) < 2:
         print("사용법: 01-playback-renders.py <영상파일>", file=sys.stderr)
         return 2
-    Probe().run([sys.argv[0], sys.argv[1]])
+    Probe(non_unique=True).run([sys.argv[0], sys.argv[1]])
     r = state["report"]
     print("=== 시나리오 01 — 재생·렌더 ===")
     for k, v in r.items():
