@@ -21,7 +21,7 @@ from .player import Player  # noqa: E402
 from . import desktop as desktop_setup  # noqa: E402
 from .editor import EditorWindow  # noqa: E402
 from .notes import NoteDocument, NotePanel  # noqa: E402
-from .state import State  # noqa: E402
+from .state import Pin, State  # noqa: E402
 from .subtitle.loader import SUB_SUFFIXES, Plan, prepare_for_video  # noqa: E402
 from .tracks import track_label  # noqa: E402
 
@@ -63,6 +63,7 @@ class BoraWindow(Adw.ApplicationWindow):
         self._sub_popover = Gtk.Popover()
         self._audio_popover = Gtk.Popover()
         self._more_popover = Gtk.Popover()
+        self._pin_popover = Gtk.Popover()
 
         self._toasts = Adw.ToastOverlay()
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -173,6 +174,11 @@ class BoraWindow(Adw.ApplicationWindow):
             Gdk.KEY_C: lambda: self.take_screenshot(False),   # Shift+C — 자막 없이
             Gdk.KEY_e: self.open_editor,
             Gdk.KEY_m: self.toggle_notes,
+            Gdk.KEY_a: self.cycle_loop,
+            Gdk.KEY_F5: lambda: self._set_loop_edge("a"),
+            Gdk.KEY_F6: lambda: self._set_loop_edge("b"),
+            Gdk.KEY_p: lambda: self.add_pin(),
+            Gdk.KEY_P: self._show_pin_menu,
             Gdk.KEY_bracketleft: lambda: self._nudge_sub_delay(-0.1),
             Gdk.KEY_bracketright: lambda: self._nudge_sub_delay(0.1),
             Gdk.KEY_comma: lambda: self._nudge_speed(-0.25),
@@ -246,7 +252,9 @@ class BoraWindow(Adw.ApplicationWindow):
             ("자막 싱크 +0.1초", "]", lambda: self._nudge_sub_delay(0.1)),
             (None, None, None),
             ("전체화면 나가기" if self.is_fullscreen() else "전체화면", "F", self.toggle_fullscreen),
-            ("학습 메모", "Ctrl+M" if False else "M", self.toggle_notes),
+            ("구간 반복", "A", self.cycle_loop),
+            ("핀 꽂기", "P", lambda: self.add_pin()),
+            ("학습 메모", "M", self.toggle_notes),
             ("자막 편집", "E", self.open_editor),
             ("스크린샷 저장", "C", lambda: self.take_screenshot(True)),
             ("파일 열기", "O", self.choose_file),
@@ -625,6 +633,120 @@ class BoraWindow(Adw.ApplicationWindow):
         self.toast(f"스크린샷 저장: {path}")
         return path
 
+    # ── 구간 반복 · 핀 ───────────────────────────────────────────────────
+    def cycle_loop(self) -> None:
+        """A -> B -> 해제. 버튼 하나로 끝낸다(곰·KMP 는 키 두 개를 쓴다)."""
+        now = self.player.time_pos or 0.0
+        a, b = self.player.loop_a, self.player.loop_b
+        if a is None:
+            self.player.set_loop(now, None)
+            self.toast(f"구간 시작 {_fmt_time(now)} — 끝점을 정하려면 다시 누른다")
+        elif b is None:
+            if now <= a + 0.3:
+                self.toast("끝점이 시작점보다 뒤여야 한다")
+                return
+            self.player.set_loop(a, now)
+            self.toast(f"구간 반복 {_fmt_time(a)} ~ {_fmt_time(now)}")
+        else:
+            self.player.clear_loop()
+            self.toast("구간 반복 해제")
+        self._sync_loop_button()
+
+    def _set_loop_edge(self, which: str) -> None:
+        """F5=시작, F6=끝. 곰·KMP 를 쓰던 사람에게 익숙한 방식이다."""
+        now = self.player.time_pos or 0.0
+        a, b = self.player.loop_a, self.player.loop_b
+        if which == "a":
+            self.player.set_loop(now, b)
+            self.toast(f"구간 시작 {_fmt_time(now)}")
+        else:
+            if a is None:
+                self.toast("시작점을 먼저 정해라 (F5)")
+                return
+            if now <= a + 0.3:
+                self.toast("끝점이 시작점보다 뒤여야 한다")
+                return
+            self.player.set_loop(a, now)
+            self.toast(f"구간 반복 {_fmt_time(a)} ~ {_fmt_time(now)}")
+        self._sync_loop_button()
+
+    def _sync_loop_button(self) -> None:
+        a, b = self.player.loop_a, self.player.loop_b
+        if a is not None and b is not None:
+            self._loop_btn.set_tooltip_text(
+                f"구간 반복 중 {_fmt_time(a)} ~ {_fmt_time(b)} — 누르면 해제")
+            self._loop_btn.add_css_class("suggested-action")
+        else:
+            if a is not None:
+                self._loop_btn.set_tooltip_text(
+                    f"시작 {_fmt_time(a)} — 끝점을 정하려면 다시 누른다")
+            else:
+                self._loop_btn.set_tooltip_text("구간 반복 (A)")
+            self._loop_btn.remove_css_class("suggested-action")
+
+    def add_pin(self, label: str = "") -> Pin | None:
+        """핀을 꽂는다. 구간이 잡혀 있으면 **구간 핀**, 아니면 시점 핀."""
+        if self._current is None:
+            return None
+        a, b = self.player.loop_a, self.player.loop_b
+        if a is not None and b is not None:
+            pin = Pin(start=a, end=b, label=label)
+            note = f"구간 핀 {_fmt_time(a)} ~ {_fmt_time(b)}"
+        else:
+            now = self.player.time_pos or 0.0
+            pin = Pin(start=now, label=label)
+            note = f"핀 {_fmt_time(now)}"
+        self.state.add_pin(self._current, pin)
+        self.toast(note)
+        log.debug("%s", note)
+        return pin
+
+    def goto_pin(self, pin: Pin) -> None:
+        """시점 핀이면 그 자리로, 구간 핀이면 그 구간을 반복한다."""
+        if pin.is_range:
+            self.player.set_loop(pin.start, pin.end)
+            self.toast(f"구간 반복 {_fmt_time(pin.start)} ~ {_fmt_time(pin.end)}")
+        else:
+            self.player.clear_loop()
+            self.toast(f"{_fmt_time(pin.start)} 로 이동")
+        self.player.seek_absolute(pin.start)
+        self._sync_loop_button()
+
+    def _show_pin_menu(self) -> None:
+        self._popup_submenu(self._pin_popover, self._rebuild_pin_menu)
+
+    def _rebuild_pin_menu(self) -> None:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4,
+                      margin_top=10, margin_bottom=10, margin_start=10, margin_end=10,
+                      width_request=300)
+        pins = self.state.pins_for(self._current) if self._current else []
+        if not pins:
+            box.append(Gtk.Label(label="꽂아 둔 핀이 없다", css_classes=["dim-label"]))
+        for index, pin in enumerate(pins):
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            if pin.is_range:
+                text = f"{_fmt_time(pin.start)} ~ {_fmt_time(pin.end)}  ({pin.length:.0f}초 반복)"
+            else:
+                text = _fmt_time(pin.start)
+            go = Gtk.Button(label=f"{text}  {pin.label}".rstrip(), has_frame=False, hexpand=True)
+            go.connect("clicked", self._on_pin_clicked, pin)
+            row.append(go)
+            drop = Gtk.Button(icon_name="user-trash-symbolic", has_frame=False,
+                              tooltip_text="핀 지우기")
+            drop.connect("clicked", self._on_pin_removed, index)
+            row.append(drop)
+            box.append(row)
+        self._pin_popover.set_child(box)
+
+    def _on_pin_clicked(self, _button, pin: Pin) -> None:
+        self._pin_popover.popdown()
+        self.goto_pin(pin)
+
+    def _on_pin_removed(self, _button, index: int) -> None:
+        if self._current is not None and self.state.remove_pin(self._current, index):
+            self._rebuild_pin_menu()
+            self.toast("핀을 지웠다")
+
     # ── 하나로 모은 메뉴 (하단 바) ───────────────────────────────────────
     def _menu_row(self, label: str, accel: str, handler, subtitle: str = "") -> Gtk.Widget:
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
@@ -663,6 +785,9 @@ class BoraWindow(Adw.ApplicationWindow):
 
         box.append(self._menu_row("화면·속도·자막 모양", "", self._show_more_menu,
                                   f"{self.player.speed:g}x"))
+        pins = self.state.pins_for(self._current) if self._current else []
+        box.append(self._menu_row("핀 목록", "P", self._show_pin_menu,
+                                  f"{len(pins)}개" if pins else "꽂은 핀 없음"))
         box.append(self._menu_row("스크린샷", "C", lambda: self.take_screenshot(True)))
         box.append(self._menu_row("파일 열기", "O", self.choose_file))
 
@@ -809,6 +934,17 @@ class BoraWindow(Adw.ApplicationWindow):
         box.append(Gtk.Image(icon_name="audio-volume-high-symbolic"))
         box.append(vol)
 
+        # 구간 반복 — 누를 때마다 A -> B -> 해제 순환. 강의에서 안 들리는 대목을 되돌려 듣는 동작이다.
+        self._loop_btn = Gtk.Button(icon_name="media-playlist-repeat-symbolic",
+                                    tooltip_text="구간 반복 (A) — 한 번 더 누르면 끝점, 또 누르면 해제")
+        self._loop_btn.connect("clicked", lambda *_: self.cycle_loop())
+        box.append(self._loop_btn)
+
+        self._pin_btn = Gtk.Button(icon_name="starred-symbolic",
+                                   tooltip_text="이 자리에 핀 꽂기 (P) — 구간이 잡혀 있으면 구간으로")
+        self._pin_btn.connect("clicked", lambda *_: self.add_pin())
+        box.append(self._pin_btn)
+
         self._menu_button = Gtk.MenuButton(icon_name="open-menu-symbolic",
                                            tooltip_text="메뉴 — 자막·오디오·메모·화면")
         self._main_popover = Gtk.Popover()
@@ -864,6 +1000,7 @@ class BoraWindow(Adw.ApplicationWindow):
             self.toast(f"자막을 읽지 못했다: {exc}")
         if self._notes_open:
             self._notes.save()
+        self.player.clear_loop()        # 다른 영상에 앞 파일의 구간이 남으면 안 된다
         self.player.open(path, self._plan)
         self._current = path
         if self._notes_open:
@@ -931,8 +1068,14 @@ class BoraWindow(Adw.ApplicationWindow):
             self._seek.set_value(pos)
             self._pos_label.set_label(_fmt_time(pos))
         self._sync_play_button()
-        hw = self.player.hwdec_current
-        self._status.set_label("" if hw == "no" else f"하드웨어 디코딩: {hw}")
+        a, b = self.player.loop_a, self.player.loop_b
+        if a is not None and b is not None:
+            self._status.set_label(f"구간 반복 {_fmt_time(a)} ~ {_fmt_time(b)}")
+        elif a is not None:
+            self._status.set_label(f"구간 시작 {_fmt_time(a)} — 끝점 대기")
+        else:
+            hw = self.player.hwdec_current
+            self._status.set_label("" if hw == "no" else f"하드웨어 디코딩: {hw}")
         return True
 
     def _on_close(self, *_args) -> bool:

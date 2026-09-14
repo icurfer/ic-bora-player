@@ -40,6 +40,28 @@ def _key(path: Path) -> str:
 
 
 @dataclass
+class Pin:
+    """영상에 꽂아 둔 표시.
+
+    `end` 가 없으면 **시점 핀**(그 자리로 이동), 있으면 **구간 핀**(A-B 반복을 건다).
+    둘을 한 모델로 두면 목록·이동·삭제를 한 번만 만들면 된다.
+    """
+
+    start: float
+    end: float | None = None
+    label: str = ""
+    created: float = field(default_factory=time.time)
+
+    @property
+    def is_range(self) -> bool:
+        return self.end is not None and self.end > self.start
+
+    @property
+    def length(self) -> float:
+        return (self.end - self.start) if self.is_range else 0.0
+
+
+@dataclass
 class RecentItem:
     path: str
     title: str = ""
@@ -47,6 +69,7 @@ class RecentItem:
     duration: float = 0.0
     finished: bool = False
     sub_track: str = ""
+    pins: list = field(default_factory=list)        # [{start, end, label, created}]
     updated: float = field(default_factory=time.time)
 
     @property
@@ -129,6 +152,8 @@ class State:
         if not self.settings.keep_recent and not self.settings.remember_position:
             return
         finished = bool(duration) and position / duration >= WATCHED_RATIO
+        key = _key(path)
+        previous = self.recent.get(key)
         item = RecentItem(
             path=str(Path(path).resolve()),
             title=title or Path(path).name,
@@ -136,8 +161,10 @@ class State:
             duration=float(duration or 0.0),
             finished=finished,
             sub_track=sub_track,
+            # 재생 위치를 기록한다고 핀을 잃으면 안 된다.
+            pins=list(previous.pins) if previous else [],
         )
-        self.recent[_key(path)] = item
+        self.recent[key] = item
         self._trim()
 
     def resume_for(self, path: Path) -> float | None:
@@ -148,6 +175,40 @@ class State:
         if item is None or not item.resumable:
             return None
         return item.position
+
+    # ── 핀 ───────────────────────────────────────────────────────────────
+    def pins_for(self, path: Path) -> list[Pin]:
+        item = self.recent.get(_key(path))
+        if item is None:
+            return []
+        out: list[Pin] = []
+        for raw in item.pins:
+            try:
+                out.append(Pin(**raw) if isinstance(raw, dict) else raw)
+            except TypeError:
+                continue        # 형식이 바뀐 항목은 조용히 버린다
+        return sorted(out, key=lambda p: p.start)
+
+    def add_pin(self, path: Path, pin: Pin) -> None:
+        key = _key(path)
+        item = self.recent.get(key)
+        if item is None:
+            item = RecentItem(path=str(Path(path).resolve()), title=Path(path).name)
+            self.recent[key] = item
+        item.pins.append(asdict(pin))
+        self.save()
+
+    def remove_pin(self, path: Path, index: int) -> bool:
+        pins = self.pins_for(path)
+        if not (0 <= index < len(pins)):
+            return False
+        target = pins[index]
+        item = self.recent[_key(path)]
+        item.pins = [p for p in item.pins
+                     if not (abs((p.get("start") if isinstance(p, dict) else p.start)
+                                 - target.start) < 0.001)]
+        self.save()
+        return True
 
     def recent_items(self) -> list[RecentItem]:
         """최근 순. 사라진 파일은 걸러 낸다."""

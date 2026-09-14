@@ -126,6 +126,33 @@ class Player:
         self._mpv.sub_filter_regex = list(patterns)
         self._mpv.sub_filter_regex_enable = bool(patterns)
 
+    # ── 구간 반복 (A-B) ──────────────────────────────────────────────────
+    # mpv 에 내장돼 있다(ab-loop-a / ab-loop-b). 직접 타이머로 되감는 것보다 정확하다
+    # — 실측: 10~13초를 설정하면 그 안에서 정확히 맴돈다.
+    OFF = "no"
+
+    @property
+    def loop_a(self) -> float | None:
+        value = self._mpv.ab_loop_a
+        return None if value in (None, self.OFF) else float(value)
+
+    @property
+    def loop_b(self) -> float | None:
+        value = self._mpv.ab_loop_b
+        return None if value in (None, self.OFF) else float(value)
+
+    def set_loop(self, a: float | None, b: float | None) -> None:
+        self._mpv.ab_loop_a = self.OFF if a is None else float(a)
+        self._mpv.ab_loop_b = self.OFF if b is None else float(b)
+        log.debug("구간 반복: %s ~ %s", a, b)
+
+    def clear_loop(self) -> None:
+        self.set_loop(None, None)
+
+    @property
+    def looping(self) -> bool:
+        return self.loop_a is not None and self.loop_b is not None
+
     # ── 재생 속도 · 화면 ─────────────────────────────────────────────────
     SPEED_MIN, SPEED_MAX = 0.25, 4.0
 
