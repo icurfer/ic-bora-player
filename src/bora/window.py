@@ -33,6 +33,10 @@ def _fmt_time(seconds: float | None) -> str:
 
 
 class BoraWindow(Adw.ApplicationWindow):
+    # 전체화면에서 헤더바·컨트롤을 감추는 동작
+    UI_HIDE_DELAY = 3          # 초 — 마우스를 멈추고 이만큼 지나면 감춘다
+    UI_TRANSITION_MS = 250     # 접히고 펴지는 시간
+
     def __init__(self, app: Adw.Application) -> None:
         super().__init__(application=app, default_width=960, default_height=560, title="Bora")
 
@@ -49,12 +53,28 @@ class BoraWindow(Adw.ApplicationWindow):
         self._toasts.set_child(root)
         self.set_content(self._toasts)
 
+        # 전체화면에서 바가 툭 사라지면 거칠다. Revealer 로 미끄러지듯 접는다.
+        # (Gtk.Revealer 는 GTK 4.0 부터라 22.04 에서도 그대로 돈다.)
         self._header = self._build_header()
-        root.append(self._header)
+        self._header_revealer = Gtk.Revealer(
+            child=self._header,
+            transition_type=Gtk.RevealerTransitionType.SLIDE_DOWN,
+            transition_duration=self.UI_TRANSITION_MS,
+            reveal_child=True,
+        )
+        root.append(self._header_revealer)
+
         self._video = MpvGLArea(self.player)
         root.append(self._video)
+
         self._controls = self._build_controls()
-        root.append(self._controls)
+        self._controls_revealer = Gtk.Revealer(
+            child=self._controls,
+            transition_type=Gtk.RevealerTransitionType.SLIDE_UP,
+            transition_duration=self.UI_TRANSITION_MS,
+            reveal_child=True,
+        )
+        root.append(self._controls_revealer)
 
         # 재생 위치는 폴링으로 갱신한다. mpv 의 time-pos 변화를 구독하면 초당 수십 번
         # 메인 루프로 넘어와 UI 가 불필요하게 바빠진다.
@@ -64,6 +84,7 @@ class BoraWindow(Adw.ApplicationWindow):
         self._setup_drop_target(self)
         self._setup_keys()
         self._setup_motion()
+        self._setup_context_menu()
         self.connect("notify::fullscreened", self._on_fullscreen_changed)
         self.connect("close-request", self._on_close)
 
@@ -140,7 +161,52 @@ class BoraWindow(Adw.ApplicationWindow):
     # ── 전체화면 ─────────────────────────────────────────────────────────
     # 전체화면인데 헤더바·컨트롤이 계속 떠 있으면 영상을 가린다.
     # 평소에는 감추고, 마우스를 움직이면 잠깐 보여준 뒤 다시 감춘다.
-    UI_HIDE_DELAY = 3          # 초
+    # ── 우클릭 메뉴 ──────────────────────────────────────────────────────
+    # 항목마다 단축키를 같이 보여준다. 전체화면에서 바를 감춘 동안에도 조작할 수 있어야 한다.
+    def _setup_context_menu(self) -> None:
+        self._menu_popover = Gtk.Popover(has_arrow=False)
+        self._menu_popover.set_parent(self)
+        gesture = Gtk.GestureClick(button=Gdk.BUTTON_SECONDARY)
+        gesture.connect("pressed", self._on_right_click)
+        self.add_controller(gesture)
+
+    def _on_right_click(self, _gesture, _n: int, x: float, y: float) -> None:
+        self._menu_popover.set_child(self._build_context_menu())
+        self._menu_popover.set_pointing_to(Gdk.Rectangle(x=int(x), y=int(y), width=1, height=1))
+        self._menu_popover.popup()
+
+    def _build_context_menu(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2,
+                      margin_top=6, margin_bottom=6, margin_start=6, margin_end=6)
+        play_label = "재생" if self.player.paused else "일시정지"
+        items = [
+            (play_label, "Space", self.toggle_pause),
+            ("정지 (처음으로)", "S", self.stop),
+            (None, None, None),
+            ("5초 뒤로", "←", lambda: self.player.seek_relative(-5)),
+            ("5초 앞으로", "→", lambda: self.player.seek_relative(5)),
+            (None, None, None),
+            ("자막 싱크 -0.1초", "[", lambda: self._nudge_sub_delay(-0.1)),
+            ("자막 싱크 +0.1초", "]", lambda: self._nudge_sub_delay(0.1)),
+            (None, None, None),
+            ("전체화면 나가기" if self.is_fullscreen() else "전체화면", "F", self.toggle_fullscreen),
+            ("파일 열기", "O", self.choose_file),
+        ]
+        for label, accel, handler in items:
+            if label is None:
+                box.append(Gtk.Separator(margin_top=3, margin_bottom=3))
+                continue
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=18)
+            row.append(Gtk.Label(label=label, xalign=0, hexpand=True))
+            row.append(Gtk.Label(label=accel, css_classes=["dim-label"], xalign=1))
+            button = Gtk.Button(child=row, has_frame=False)
+            button.connect("clicked", self._on_menu_item, handler)
+            box.append(button)
+        return box
+
+    def _on_menu_item(self, _button, handler) -> None:
+        self._menu_popover.popdown()
+        handler()
 
     def _setup_motion(self) -> None:
         motion = Gtk.EventControllerMotion()
@@ -160,7 +226,8 @@ class BoraWindow(Adw.ApplicationWindow):
     def _hide_ui(self) -> bool:
         self._hide_ui_id = 0
         # 자막 메뉴를 열어 둔 채로 감추면 조작을 뺏는다.
-        if self.is_fullscreen() and not self._sub_popover.get_visible():
+        busy = self._sub_popover.get_visible() or self._menu_popover.get_visible()
+        if self.is_fullscreen() and not busy:
             self._show_chrome(False)
         return False
 
@@ -170,10 +237,14 @@ class BoraWindow(Adw.ApplicationWindow):
             self._hide_ui_id = 0
 
     def _show_chrome(self, visible: bool) -> None:
-        self._header.set_visible(visible)
-        self._controls.set_visible(visible)
+        self._header_revealer.set_reveal_child(visible)
+        self._controls_revealer.set_reveal_child(visible)
         # 감출 때는 마우스 커서도 같이 감춘다(영상 위에 남으면 거슬린다).
         self.set_cursor(None if visible else Gdk.Cursor.new_from_name("none", None))
+
+    @property
+    def chrome_visible(self) -> bool:
+        return self._header_revealer.get_reveal_child()
 
     def set_fullscreen(self, on: bool) -> None:
         """요청만 한다. 실제 반영은 'fullscreened' 상태 변화에서 처리한다.
@@ -210,7 +281,7 @@ class BoraWindow(Adw.ApplicationWindow):
         self._title = Adw.WindowTitle(title="Bora", subtitle="")
         header.set_title_widget(self._title)
 
-        open_btn = Gtk.Button(icon_name="document-open-symbolic", tooltip_text="파일 열기")
+        open_btn = Gtk.Button(icon_name="document-open-symbolic", tooltip_text="파일 열기 (O)")
         open_btn.connect("clicked", lambda *_: self.choose_file())
         header.pack_start(open_btn)
 
@@ -220,7 +291,7 @@ class BoraWindow(Adw.ApplicationWindow):
         # 자막 메뉴 — Adw.Dialog/PreferencesDialog 는 1.5+ 라 쓰지 않는다.
         # MenuButton + Popover 는 GTK 4.0 부터 있어 22.04 에서도 그대로 돈다.
         self._sub_button = Gtk.MenuButton(icon_name="media-view-subtitles-symbolic",
-                                          tooltip_text="자막")
+                                          tooltip_text="자막 — 트랙 선택·싱크 (싱크: [ , ])")
         self._sub_popover = Gtk.Popover()
         self._sub_button.set_popover(self._sub_popover)
         self._rebuild_subtitle_menu()
@@ -298,7 +369,7 @@ class BoraWindow(Adw.ApplicationWindow):
         box.append(self._pos_label)
 
         self._seek = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, hexpand=True,
-                               draw_value=False)
+                               draw_value=False, tooltip_text="탐색 (좌/우 화살표 5초)")
         self._seek.set_range(0, 1)
         self._seek.connect("change-value", self._on_seek)
         box.append(self._seek)
@@ -311,6 +382,7 @@ class BoraWindow(Adw.ApplicationWindow):
         vol.set_value(self.player.volume)
         vol.connect("value-changed", lambda s: setattr(self.player, "volume", s.get_value()))
         self._vol_scale = vol
+        vol.set_tooltip_text("볼륨 (위/아래 화살표)")
         box.append(Gtk.Image(icon_name="audio-volume-high-symbolic"))
         box.append(vol)
 

@@ -126,7 +126,10 @@ def main() -> int:
 
                 # 정지 — 처음으로 되돌리고 멈춘다. 파일은 열린 채여야 한다.
                 p.seek_absolute(4)
+                wait_until(lambda: (p.time_pos or 0) > 2, 3.0)
                 win.stop()
+                # seek 는 즉시 반영되지 않는다. time_pos 가 실제로 돌아갈 때까지 기다린다.
+                wait_until(lambda: (p.time_pos or 99) < 1.0, 3.0)
                 pos = p.time_pos or 0
                 check("정지(처음으로 + 일시정지)", pos < 1.0 and p.paused,
                       f"time_pos={pos:.2f}, paused={p.paused}")
@@ -140,27 +143,27 @@ def main() -> int:
                 wait_until(lambda: win.is_fullscreen(), 3.0)
                 check("전체화면 상태 진입", win.is_fullscreen())
                 icon_fs = win._fs_button.get_icon_name()
-                check("전체화면 진입 직후엔 UI 가 보인다",
-                      win._header.get_visible() and win._controls.get_visible())
+                check("전체화면 진입 직후엔 UI 가 보인다", win.chrome_visible)
                 check("크기 변경 뒤 다시 그린다(검은 화면 방지)",
                       state["renders"] > renders_before,
                       f"렌더 {renders_before} -> {state['renders']}")
                 win._hide_ui()          # 타이머가 할 일을 당겨서 실행
-                check("전체화면에서 헤더바·컨트롤이 감춰진다",
-                      not win._header.get_visible() and not win._controls.get_visible(),
-                      f"header={win._header.get_visible()}, controls={win._controls.get_visible()}")
+                check("전체화면에서 헤더바·컨트롤이 감춰진다", not win.chrome_visible,
+                      f"reveal={win.chrome_visible}")
+                check("접히는 전환이 붙어 있다(툭 사라지지 않는다)",
+                      win._header_revealer.get_transition_duration() > 0
+                      and win._header_revealer.get_transition_type() == Gtk.RevealerTransitionType.SLIDE_DOWN,
+                      f"{win._header_revealer.get_transition_duration()}ms")
                 win._on_motion(None, 0, 0)
-                check("마우스를 움직이면 다시 보인다",
-                      win._header.get_visible() and win._controls.get_visible())
+                check("마우스를 움직이면 다시 보인다", win.chrome_visible)
 
                 # 창 관리자가 직접 되돌리는 경우 — set_fullscreen 을 거치지 않는다
                 win.unfullscreen()
                 wait_until(lambda: not win.is_fullscreen(), 3.0)
                 icon_normal = win._fs_button.get_icon_name()
                 check("전체화면 버튼 아이콘 전환", icon_fs != icon_normal, f"{icon_fs} / {icon_normal}")
-                check("창 관리자로 나와도 UI 가 돌아온다",
-                      win._header.get_visible() and win._controls.get_visible(),
-                      f"header={win._header.get_visible()}, controls={win._controls.get_visible()}")
+                check("창 관리자로 나와도 UI 가 돌아온다", win.chrome_visible,
+                      f"reveal={win.chrome_visible}")
 
                 # 자막 싱크 단축키
                 win._nudge_sub_delay(0.3)
@@ -172,6 +175,30 @@ def main() -> int:
                 check("스페이스 키 처리", consumed is True)
                 passthrough = win._on_key(None, Gdk.KEY_z, 0, Gdk.ModifierType(0))
                 check("모르는 키는 넘긴다", passthrough is False)
+
+                # 우클릭 메뉴
+                has_right = any(
+                    isinstance(c, Gtk.GestureClick) and c.get_button() == Gdk.BUTTON_SECONDARY
+                    for c in win.observe_controllers())
+                check("우클릭 제스처 연결", has_right)
+                win._on_right_click(None, 1, 10, 10)
+                check("우클릭 메뉴가 열린다", win._menu_popover.get_visible())
+                menu = win._menu_popover.get_child()
+                labels = []
+                row = menu.get_first_child()
+                while row is not None:
+                    if isinstance(row, Gtk.Button):
+                        inner = row.get_child().get_first_child()
+                        labels.append(inner.get_label())
+                    row = row.get_next_sibling()
+                check("메뉴 항목이 채워진다", len(labels) >= 8, f"{len(labels)}개: {labels[:4]}")
+                win._menu_popover.popdown()
+
+                # 툴팁에 단축키가 적혀 있다
+                tips = [win._play_btn.get_tooltip_text(), win._stop_btn.get_tooltip_text(),
+                        win._fs_button.get_tooltip_text(), win._sub_button.get_tooltip_text()]
+                check("버튼 툴팁에 단축키 표기", all(t and any(k in t for k in "()[]") for t in tips),
+                      " / ".join(str(t) for t in tips))
 
                 # 드롭 — 자막만 떨구면 현재 영상에 붙는다
                 ok = win.open_dropped([sub])
