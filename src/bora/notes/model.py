@@ -25,10 +25,15 @@ class Timestamp:
     start: int          # 문서 안 문자 오프셋 (대괄호 포함)
     end: int
     seconds: float
+    range_end: float | None = None      # `[A] ~ [B]` 의 B. 구간 표기일 때만 채워진다
 
     @property
     def length(self) -> int:
         return self.end - self.start
+
+    @property
+    def is_range(self) -> bool:
+        return self.range_end is not None and self.range_end > self.seconds
 
 
 def format_stamp(seconds: float | None) -> str:
@@ -37,16 +42,42 @@ def format_stamp(seconds: float | None) -> str:
     return "[%02d:%02d:%02d]" % (total // 3600, total // 60 % 60, total % 60)
 
 
+def _seconds_of(match: re.Match) -> float:
+    hh, mm, ss = match.group(1), match.group(2), match.group(3)
+    if ss is None:              # `[12:34]` 는 분:초로 읽는다
+        return float(int(hh) * 60 + int(mm))
+    return float(int(hh) * 3600 + int(mm) * 60 + int(ss))
+
+
 def parse_stamps(text: str) -> list[Timestamp]:
-    """본문에서 타임스탬프를 모두 찾는다. 클릭·강조에 쓴다."""
+    """본문에서 타임스탬프를 모두 찾는다. 클릭·강조에 쓴다.
+
+    `[A] ~ [B]` 처럼 이어진 두 개는 **구간**으로 읽는다 — 핀에서 넣은 구간 표시다.
+    그 줄의 어느 쪽을 눌러도 구간 반복이 걸리게 하려고 둘 다 range_end 를 갖는다.
+    """
+    matches = list(STAMP_RE.finditer(text))
     found: list[Timestamp] = []
-    for m in STAMP_RE.finditer(text):
-        hh, mm, ss = m.group(1), m.group(2), m.group(3)
-        if ss is None:          # `[12:34]` 는 분:초로 읽는다
-            seconds = int(hh) * 60 + int(mm)
-        else:
-            seconds = int(hh) * 3600 + int(mm) * 60 + int(ss)
-        found.append(Timestamp(m.start(), m.end(), float(seconds)))
+    i = 0
+    while i < len(matches):
+        m = matches[i]
+        seconds = _seconds_of(m)
+        range_end = None
+        if i + 1 < len(matches):
+            nxt = matches[i + 1]
+            between = text[m.end():nxt.start()]
+            # 사이에 구분 기호만 있으면 한 구간으로 본다
+            if between.strip() in ("~", "-", "–", "—", "->", "→"):
+                range_end = _seconds_of(nxt)
+        if range_end is not None:
+            nxt = matches[i + 1]
+            found.append(Timestamp(m.start(), m.end(), seconds, range_end))
+            found.append(Timestamp(nxt.start(), nxt.end(), _seconds_of(nxt), None))
+            # 뒤쪽 스탬프를 눌러도 같은 구간이 걸리도록 시작 시각을 기억시킨다
+            found[-1] = Timestamp(nxt.start(), nxt.end(), seconds, range_end)
+            i += 2
+            continue
+        found.append(Timestamp(m.start(), m.end(), seconds))
+        i += 1
     return found
 
 
@@ -124,6 +155,16 @@ class NoteDocument:
         return True
 
     # ── 편집 도우미 ──────────────────────────────────────────────────────
+    def pin_heading(self, start: float, end: float | None = None, label: str = "") -> str:
+        """핀을 메모 한 줄로. 구간이면 `## [A] ~ [B]`, 시점이면 `## [A]`.
+
+        제목(`##`)으로 넣는 이유: 나중에 목차처럼 훑어보기 좋고, 라이브 프리뷰에서 크게 보인다.
+        """
+        stamp = format_stamp(start)
+        if end is not None and end > start:
+            stamp = f"{stamp} ~ {format_stamp(end)}"
+        return f"## {stamp} {label}".rstrip() + ("\n" if label else " ")
+
     def heading_for(self, seconds: float | None, title: str = "") -> str:
         """`## [00:12:34] ` — 삽입할 문자열. 뒤에 커서를 둔다."""
         stamp = format_stamp(seconds)

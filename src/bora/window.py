@@ -723,6 +723,12 @@ class BoraWindow(Adw.ApplicationWindow):
             pin = Pin(start=now, label=label)
             note = f"핀 {_fmt_time(now)}"
         self.state.add_pin(self._current, pin)
+        # 메모에도 남긴다 — 핀과 메모가 따로 놀면 되돌아볼 때 둘을 맞춰 봐야 한다.
+        try:
+            if self._notes.append_pin(pin.start, pin.end, label):
+                note += " · 메모에 남김"
+        except Exception as exc:            # 메모 실패가 핀을 막으면 안 된다
+            log.warning("핀을 메모에 남기지 못했다: %s", exc)
         self.toast(note)
         log.debug("%s", note)
         return pin

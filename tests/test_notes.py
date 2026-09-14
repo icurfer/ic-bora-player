@@ -123,3 +123,39 @@ def test_heading_for_puts_cursor_after_space(tmp_path: Path) -> None:
     doc = NoteDocument.load_for(_video(tmp_path))
     assert doc.heading_for(754.3) == "## [00:12:34] "
     assert doc.heading_for(754.3, "제목 있음") == "## [00:12:34] 제목 있음\n"
+
+
+# ── 핀 표기 (학습 보조) ──────────────────────────────────────────────────
+def test_pin_heading_range_and_point(tmp_path: Path) -> None:
+    doc = NoteDocument.load_for(_video(tmp_path))
+    assert doc.pin_heading(900, 1140, "어려운 대목") == "## [00:15:00] ~ [00:19:00] 어려운 대목\n"
+    assert doc.pin_heading(3300) == "## [00:55:00] "
+    assert doc.pin_heading(900, 1140) == "## [00:15:00] ~ [00:19:00] "
+
+
+def test_range_stamp_is_parsed_from_both_sides() -> None:
+    """구간 표기는 어느 쪽을 눌러도 같은 구간이 걸려야 한다."""
+    stamps = parse_stamps("## [00:15:00] ~ [00:19:00] 어려운 대목")
+    assert len(stamps) == 2
+    assert all(s.is_range for s in stamps)
+    assert {s.seconds for s in stamps} == {900.0}
+    assert {s.range_end for s in stamps} == {1140.0}
+
+
+def test_point_stamp_is_not_a_range() -> None:
+    stamps = parse_stamps("## [00:55:00] 그냥 표시")
+    assert len(stamps) == 1
+    assert stamps[0].is_range is False
+    assert stamps[0].range_end is None
+
+
+@pytest.mark.parametrize("separator", ["~", "-", "–", "->", "→"])
+def test_range_separators(separator: str) -> None:
+    stamps = parse_stamps(f"## [00:01:00] {separator} [00:02:00]")
+    assert stamps[0].is_range, separator
+
+
+def test_two_unrelated_stamps_are_not_a_range() -> None:
+    """사이에 글자가 있으면 구간이 아니다."""
+    stamps = parse_stamps("[00:01:00] 에서 본 것과 [00:02:00] 의 차이")
+    assert not any(s.is_range for s in stamps)

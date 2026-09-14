@@ -154,6 +154,30 @@ class NotePanel(Gtk.Box):
         self._view.grab_focus()
         self._retag()
 
+    def append_pin(self, start: float, end: float | None = None, label: str = "") -> bool:
+        """핀을 메모 끝에 한 줄로 남긴다.
+
+        패널이 닫혀 있어도 남겨야 한다 — 나중에 열었을 때 핀과 메모가 따로 놀면
+        되돌아볼 때 둘을 맞춰 봐야 한다. 문서가 아직 없으면 지금 연다.
+        """
+        if self.doc is None:
+            if self.window._current is None:
+                return False
+            self.load_for(self.window._current, self.window._current.stem)
+        line = self.doc.pin_heading(start, end, label)
+
+        end_iter = self._buffer.get_end_iter()
+        prefix = "" if end_iter.starts_line() else "\n"
+        self._buffer.insert(end_iter, prefix + line)
+        self._retag()
+        # 패널이 닫혀 있으면 자동 저장 타이머가 돌 일이 없다. 바로 저장한다.
+        if not self.get_visible():
+            self.save()
+        else:
+            self._schedule_autosave()
+        log.debug("핀을 메모에 남겼다: %s", line.strip())
+        return True
+
     def insert_screenshot(self) -> None:
         if self.doc is None or self.window._current is None:
             return
@@ -325,6 +349,15 @@ class NotePanel(Gtk.Box):
     def _on_click(self, _gesture, n_press: int, x: float, y: float) -> None:
         stamp = self._stamp_at(x, y)
         if stamp is None:
+            return
+        if stamp.is_range:
+            # `[A] ~ [B]` 표기를 누르면 그 구간을 반복한다 — 핀에서 넣은 구간이다.
+            self.window.player.set_loop(stamp.seconds, stamp.range_end)
+            self.window.player.seek_absolute(stamp.seconds)
+            self.window._sync_loop_button()
+            self.window.toast(
+                f"구간 반복 {format_stamp(stamp.seconds)} ~ {format_stamp(stamp.range_end)}")
+            log.debug("메모에서 구간 반복: %.1f ~ %.1f", stamp.seconds, stamp.range_end)
             return
         self.window.player.seek_absolute(stamp.seconds)
         self.window.toast(f"{format_stamp(stamp.seconds)} 로 이동")

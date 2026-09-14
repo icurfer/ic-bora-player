@@ -29,6 +29,7 @@ gi.require_version("Adw", "1")
 from gi.repository import GLib  # noqa: E402
 
 from bora.app import BoraApplication  # noqa: E402
+from bora.notes.model import parse_stamps  # noqa: E402
 from bora.state import State  # noqa: E402
 
 results: list[tuple[str, bool, str]] = []
@@ -166,6 +167,30 @@ def main() -> int:
                 check("P3 위치 기록이 핀을 지우지 않는다",
                       len(win.state.pins_for(video)) == 2,
                       f"{len(win.state.pins_for(video))}개")
+
+                # P5 — 핀이 메모에도 남는가 (학습 보조의 핵심)
+                note_path = video.with_suffix(".md")
+                check("P5 메모 파일이 생긴다", note_path.exists(), str(note_path))
+                body = note_path.read_text(encoding="utf-8") if note_path.exists() else ""
+                check("P5 구간 핀이 구간 표기로 들어간다",
+                      "~" in body and "어려운 대목" in body,
+                      repr([l for l in body.splitlines() if "~" in l][:1]))
+                check("P5 시점 핀도 들어간다",
+                      body.count("## [") >= 2, f"제목 {body.count('## [')}개")
+
+                # 그 표기를 다시 읽으면 구간으로 인식되는가
+                stamps = [t for t in parse_stamps(body) if t.is_range]
+                check("P5 메모의 구간 표기를 구간으로 읽는다", bool(stamps),
+                      f"{stamps[0].seconds:.0f}~{stamps[0].range_end:.0f}" if stamps else "없음")
+
+                # 메모의 구간을 눌렀을 때처럼 반복이 걸리는가
+                if stamps:
+                    p.clear_loop()
+                    panel = win._notes
+                    panel.window.player.set_loop(stamps[0].seconds, stamps[0].range_end)
+                    check("P5 메모에서 구간 반복이 걸린다", p.looping,
+                          f"{p.loop_a:.0f} ~ {p.loop_b:.0f}" if p.looping else "안 걸림")
+                    p.clear_loop()
 
                 # P4 — 삭제
                 win.state.remove_pin(video, 0)
