@@ -18,6 +18,7 @@ from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
 from .glarea import MpvGLArea  # noqa: E402
 from .log import get as get_logger  # noqa: E402
 from .player import Player  # noqa: E402
+from .editor import EditorWindow  # noqa: E402
 from .state import State  # noqa: E402
 from .subtitle.loader import SUB_SUFFIXES, Plan, prepare_for_video  # noqa: E402
 from .tracks import track_label  # noqa: E402
@@ -52,6 +53,7 @@ class BoraWindow(Adw.ApplicationWindow):
         self.state = State()
         self._resume_toast: Adw.Toast | None = None
         self._save_state_id = 0
+        self._editor: EditorWindow | None = None
 
         self._toasts = Adw.ToastOverlay()
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -151,6 +153,7 @@ class BoraWindow(Adw.ApplicationWindow):
             Gdk.KEY_bracketright: lambda: self._nudge_sub_delay(0.1),
             Gdk.KEY_o: self.choose_file,
             Gdk.KEY_c: lambda: self.take_screenshot(True),
+            Gdk.KEY_e: self.open_editor,
             Gdk.KEY_bracketleft: lambda: self._nudge_sub_delay(-0.1),
             Gdk.KEY_bracketright: lambda: self._nudge_sub_delay(0.1),
             Gdk.KEY_comma: lambda: self._nudge_speed(-0.25),
@@ -224,6 +227,7 @@ class BoraWindow(Adw.ApplicationWindow):
             ("자막 싱크 +0.1초", "]", lambda: self._nudge_sub_delay(0.1)),
             (None, None, None),
             ("전체화면 나가기" if self.is_fullscreen() else "전체화면", "F", self.toggle_fullscreen),
+            ("자막 편집", "E", self.open_editor),
             ("스크린샷 저장", "C", lambda: self.take_screenshot(True)),
             ("파일 열기", "O", self.choose_file),
         ]
@@ -340,6 +344,11 @@ class BoraWindow(Adw.ApplicationWindow):
         self._rebuild_audio_menu()
         header.pack_end(self._audio_button)
 
+        edit_btn = Gtk.Button(icon_name="document-edit-symbolic",
+                              tooltip_text="자막 편집 (E) — 재생 위치를 그 줄에 박는다")
+        edit_btn.connect("clicked", lambda *_: self.open_editor())
+        header.pack_end(edit_btn)
+
         self._more_button = Gtk.MenuButton(icon_name="open-menu-symbolic",
                                            tooltip_text="속도·화면·스크린샷·최근 파일")
         self._more_popover = Gtk.Popover()
@@ -425,6 +434,80 @@ class BoraWindow(Adw.ApplicationWindow):
     def _on_recent_clicked(self, _button, path: str) -> None:
         self._more_popover.popdown()
         self.open_path(Path(path))
+
+    # ── 자막 편집 ────────────────────────────────────────────────────────
+    def open_editor(self) -> EditorWindow | None:
+        """자막 에디터를 연다. 이미 열려 있으면 그 창을 앞으로 가져온다."""
+        if self._editor is not None:
+            self._editor.follow_playback()
+            self._editor.present()
+            return self._editor
+
+        chosen = self._editor_source()
+        if chosen is None:
+            self.toast("편집할 자막이 없다. 자막 파일을 먼저 열어라")
+            return None
+        source, save_to = chosen
+        try:
+            from .subtitle.model import SubtitleDocument
+
+            document = SubtitleDocument.load(source)
+        except Exception as exc:
+            log.exception("자막을 읽지 못했다: %s", source)
+            self.toast(f"자막을 읽지 못했다: {exc}")
+            return None
+        if not document.cues:
+            self.toast("자막에 편집할 줄이 없다")
+            return None
+
+        # 편집 중에는 멈춰 두는 편이 낫다 — 시각을 박는 작업이다.
+        if not self.player.paused:
+            self.toggle_pause()
+
+        self._editor = EditorWindow(self, document, save_to=save_to)
+        self._editor.connect("close-request", self._on_editor_closed)
+        self._editor.present()
+        return self._editor
+
+    def _editor_source(self) -> tuple[Path, Path] | None:
+        """(읽을 파일, 저장할 파일).
+
+        전처리로 분리한 트랙이 있으면 **지금 선택된 트랙**을 편집한다(기획서 v0.2 §8-3).
+        ⚠ 그 트랙은 캐시 폴더에 있다. 거기에 저장하면 사용자가 찾을 수 없으므로,
+           저장은 **영상 옆 `<영상이름>.<언어>.srt`** 로 한다.
+        """
+        if self._plan is None or self._current is None:
+            return None
+
+        if self._plan.tracks:
+            chosen = self._plan.tracks[0]
+            selected = self.player.sub_id
+            for track in self.player.sub_tracks:
+                if track.get("id") != selected:
+                    continue
+                name = track.get("external-filename")
+                if not name:
+                    break
+                for candidate in self._plan.tracks:
+                    if str(candidate.path) == name:
+                        chosen = candidate
+                        break
+                break
+            save_to = self._current.with_suffix(f".{chosen.lang}.srt")
+            return chosen.path, save_to
+
+        source = self._plan.source
+        return source, source
+
+    def _on_editor_closed(self, *_args) -> bool:
+        self._editor = None
+        return False
+
+    def reload_subtitle(self, path: Path) -> None:
+        """에디터가 저장한 파일을 다시 물린다. 방금 고친 결과가 화면에 바로 보인다."""
+        self.player.reload_sub(path)
+        GLib.timeout_add(300, self._refresh_subtitle_menu_once)
+        self.toast("자막을 다시 읽었다")
 
     def take_screenshot(self, include_subs: bool = True) -> Path | None:
         base = self.state.settings.screenshot_dir or GLib.get_user_special_dir(

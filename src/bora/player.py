@@ -184,12 +184,26 @@ class Player:
         국내 플레이어의 정지 버튼 관례를 따른다. mpv 의 'stop' 명령은 파일을 닫아 버려서
         쓰지 않는다.
         """
-        try:
-            self._mpv.seek(0, reference="absolute")
-        except (SystemError, OSError):
-            pass
+        self.seek_absolute(0)
         self._mpv.pause = True
         log.debug("정지: 처음으로 되돌림")
+
+    def reload_sub(self, path: Path | str | None = None) -> None:
+        """자막을 다시 읽는다. path 를 주면 그 파일로 갈아 끼운다.
+
+        실측(기획서 v0.2 §8-2): `sub-reload` 는 약 0.5초 걸리지만 재생은 끊기지 않는다.
+        편집할 때마다 부르지 말고 **저장 시점에만** 부른다.
+        """
+        if path is not None:
+            self._mpv.sub_add(str(path), "select")
+        else:
+            try:
+                self._mpv.command("sub-reload")
+            except (SystemError, OSError):
+                pass
+        # 파일에 싱크를 굳혔으면 delay 가 남아 있으면 안 된다 — 두 번 밀린다.
+        self._mpv.sub_delay = 0.0
+        log.info("자막 다시 읽기: %s", path or "(현재 트랙)")
 
     def add_sub(self, track: Track, select: bool = False) -> None:
         """분리한 자막 트랙을 주입한다. 제목·언어까지 넘겨야 트랙 메뉴에 제대로 보인다."""
@@ -236,16 +250,25 @@ class Player:
         self._mpv.pause = not self._mpv.pause
 
     def seek_absolute(self, seconds: float) -> None:
+        """정확한 위치로 이동한다.
+
+        ⚠ `mpv.seek(x, reference="absolute")` 를 쓰면 안 된다 — python-mpv 1.0.8 의 그 래퍼는
+           절대 seek 를 제대로 보내지 못하고 **0 근처로 되감긴다**(2026-09-14 실측:
+           9.0초 요청 → 0.80초). 명령을 직접 보내야 한다.
+           `absolute+exact` 는 키프레임이 아니라 요청한 지점으로 간다 — 자막 싱크를 맞추는
+           도구이므로 정확도가 속도보다 중요하다.
+        """
         try:
-            self._mpv.seek(seconds, reference="absolute")
-        except SystemError:
-            pass        # 아직 파일이 안 열렸을 때. 무시해도 되는 상황이다
+            self._mpv.command("seek", float(seconds), "absolute+exact")
+        except Exception as exc:
+            # 삼키기만 하면 왜 안 움직였는지 알 수 없다. 무시하되 남긴다.
+            log.debug("seek(절대 %.2fs) 실패: %r", seconds, exc)
 
     def seek_relative(self, seconds: float) -> None:
         try:
             self._mpv.seek(seconds, reference="relative")
-        except SystemError:
-            pass
+        except Exception as exc:
+            log.debug("seek(상대 %+.2fs) 실패: %r", seconds, exc)
 
     # ── 상태 ─────────────────────────────────────────────────────────────
     @property
