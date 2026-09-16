@@ -20,5 +20,7 @@ dist/
 /.venv-stt/
 /.venv/
 
-# deb 빌드 결과
-/dist/
+# deb 빌드 중간물은 무시하되, 배포용 .deb 는 올린다
+# (56 KB 라 git 에 부담이 없고, 다른 머신에서 바로 받아 설치할 수 있다)
+/dist/*
+!/dist/*.deb
