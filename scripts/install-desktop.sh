@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 #
-# Bora 를 앱 목록에 등록한다(사용자 영역, sudo 불필요).
+# Bora 를 앱 목록에 등록한다(사용자 영역, sudo 불필요). **개발 중 편의용**이다.
 #
-# 배포용 패키징(deb/Flatpak)은 아직 미정이라(deferred §1), 개발 중 편의로 쓰는 설치기다.
+# ⚠ 배포판을 쓸 거면 이것 대신 deb 를 쓴다: bash scripts/build-deb.sh
+#   둘을 같이 두면 ~/.local/bin/bora 가 /usr/bin/bora 를 **가린다**(PATH 우선순위).
+#   deb 를 설치했다면 이 스크립트를 --remove 로 걷어내라.
+#
 # 저장소를 지우거나 옮기면 실행이 깨지므로 그때는 다시 실행해야 한다.
 #
 #   bash scripts/install-desktop.sh          설치

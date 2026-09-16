@@ -19,3 +19,6 @@ dist/
 # 텍스트 추출용 별도 환경 (선택 설치, 436MB)
 /.venv-stt/
 /.venv/
+
+# deb 빌드 결과
+/dist/
