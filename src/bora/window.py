@@ -19,6 +19,8 @@ from .glarea import MpvGLArea  # noqa: E402
 from .log import get as get_logger  # noqa: E402
 from .player import Player  # noqa: E402
 from . import desktop as desktop_setup  # noqa: E402
+from .clip import ClipList, ClipWindow  # noqa: E402
+from .clip.model import DEFAULT_SPAN, Clip  # noqa: E402
 from .editor import EditorWindow  # noqa: E402
 from .notes import NoteDocument, NotePanel  # noqa: E402
 from .state import Pin, State  # noqa: E402
@@ -57,6 +59,8 @@ class BoraWindow(Adw.ApplicationWindow):
         self._resume_toast: Adw.Toast | None = None
         self._save_state_id = 0
         self._editor: EditorWindow | None = None
+        self._clips = ClipList()
+        self._clip_window: ClipWindow | None = None
         self._notes_open = False
         self._stt: ExtractRunner | None = None
         self._stt_bar: Gtk.ProgressBar | None = None
@@ -162,7 +166,6 @@ class BoraWindow(Adw.ApplicationWindow):
             return False
         handlers = {
             Gdk.KEY_space: self.toggle_pause,
-            Gdk.KEY_p: self.toggle_pause,
             Gdk.KEY_s: self.stop,
             Gdk.KEY_f: self.toggle_fullscreen,
             Gdk.KEY_F11: self.toggle_fullscreen,
@@ -171,8 +174,6 @@ class BoraWindow(Adw.ApplicationWindow):
             Gdk.KEY_Right: lambda: self.player.seek_relative(5),
             Gdk.KEY_Down: lambda: self._nudge_volume(-5),
             Gdk.KEY_Up: lambda: self._nudge_volume(5),
-            Gdk.KEY_bracketleft: lambda: self._nudge_sub_delay(-0.1),
-            Gdk.KEY_bracketright: lambda: self._nudge_sub_delay(0.1),
             Gdk.KEY_o: self.choose_file,
             Gdk.KEY_c: lambda: self.take_screenshot(True),
             Gdk.KEY_C: lambda: self.take_screenshot(False),   # Shift+C — 자막 없이
@@ -185,6 +186,8 @@ class BoraWindow(Adw.ApplicationWindow):
             Gdk.KEY_r: lambda: self._nudge_sub_pos(-5),     # 위로
             Gdk.KEY_R: lambda: self._nudge_sub_pos(5),      # Shift+R — 아래로
             Gdk.KEY_P: self._show_pin_menu,
+            Gdk.KEY_k: lambda: self.add_clip(),
+            Gdk.KEY_K: self.show_clips,          # Shift+K — 클립 목록
             Gdk.KEY_bracketleft: lambda: self._nudge_sub_delay(-0.1),
             Gdk.KEY_bracketright: lambda: self._nudge_sub_delay(0.1),
             Gdk.KEY_comma: lambda: self._nudge_speed(-0.25),
@@ -262,6 +265,10 @@ class BoraWindow(Adw.ApplicationWindow):
             ("핀 꽂기 (제목 입력)", "P", lambda: self.add_pin()),
             ("핀만 꽂기", "Shift+P", lambda: self.add_pin(write_title=False)),
             ("핀 목록", "", self._show_pin_menu),
+            (None, None, None),
+            ("이 구간 클립으로 담기", "K", lambda: self.add_clip()),
+            ("클립 목록", "Shift+K", self.show_clips),
+            (None, None, None),
             ("학습 메모", "M", self.toggle_notes),
             ("자막 편집", "E", self.open_editor),
             ("스크린샷 저장", "C", lambda: self.take_screenshot(True)),
@@ -836,6 +843,64 @@ class BoraWindow(Adw.ApplicationWindow):
                 self._loop_btn.set_tooltip_text("구간 반복 (A)")
             self._loop_btn.remove_css_class("suggested-action")
 
+    # ── 클립 (기획서 v0.4) ───────────────────────────────────────────────
+    @property
+    def current_path(self) -> Path | None:
+        """지금 재생 중인 파일. 클립 창이 내보낼 원본으로 쓴다."""
+        return self._current
+
+    def current_audio_index(self) -> int | None:
+        """선택된 오디오 트랙의 **0-기반 순번**.
+
+        mpv 의 트랙 id 는 1-기반이고 모든 종류를 통틀어 매기지만,
+        ffmpeg 의 `0:a:N` 은 오디오 스트림만 따로 0부터 센다. 그 변환이다.
+        """
+        for index, track in enumerate(self.player.audio_tracks):
+            if track.get("selected"):
+                return index
+        return None
+
+    def add_clip(self) -> bool:
+        """구간을 클립 목록에 담는다.
+
+        A-B 구간이 잡혀 있으면 그것을, 없으면 현재 위치부터 30초를 담는다
+        (핀처럼 가볍게 누를 수 있어야 한다 — 구간은 목록 창에서 고친다).
+        """
+        if self._current is None:
+            self.toast("재생 중인 영상이 없다")
+            return False
+        a, b = self.player.loop_a, self.player.loop_b
+        if a is not None and b is not None:
+            clip = Clip(a, b)
+        else:
+            start = self.player.time_pos or 0.0
+            end = min(start + DEFAULT_SPAN, self.player.duration or start + DEFAULT_SPAN)
+            clip = Clip(start, end)
+        if not clip.valid:
+            self.toast("구간이 너무 짧다")
+            return False
+        self._clips.add(clip)
+        self.toast(f"클립 담음 — {clip.label()} ({len(self._clips)}개)")
+        log.info("클립 담음: %.1f~%.1f", clip.start, clip.end)
+        if self._clip_window is not None:
+            self._clip_window.refresh()
+        return True
+
+    def show_clips(self) -> None:
+        """클립 목록 창을 연다. 이미 열려 있으면 앞으로 가져온다."""
+        if self._clip_window is not None:
+            self._clip_window.refresh()
+            self._clip_window.present()
+            return
+        window = ClipWindow(self, self._clips)
+        window.connect("close-request", self._on_clip_window_closed)
+        self._clip_window = window
+        window.present()
+
+    def _on_clip_window_closed(self, _window) -> bool:
+        self._clip_window = None
+        return False
+
     def add_pin(self, label: str = "", write_title: bool = True) -> Pin | None:
         """핀을 꽂는다. 구간이 잡혀 있으면 **구간 핀**, 아니면 시점 핀.
 
@@ -959,6 +1024,9 @@ class BoraWindow(Adw.ApplicationWindow):
         pins = self.state.pins_for(self._current) if self._current else []
         box.append(self._menu_row("핀 목록", "", self._show_pin_menu,
                                   f"{len(pins)}개" if pins else "꽂은 핀 없음"))
+        box.append(self._menu_row(
+            "클립 — 잘라내기·이어붙이기", "K", self.show_clips,
+            f"{len(self._clips)}개 담김" if self._clips else "구간을 담아 파일로 꺼낸다"))
         box.append(self._menu_row("스크린샷", "C", lambda: self.take_screenshot(True)))
         box.append(self._menu_row("파일 열기", "O", self.choose_file))
 

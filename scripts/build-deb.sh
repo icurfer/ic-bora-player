@@ -63,7 +63,7 @@ Priority: optional
 Architecture: all
 Maintainer: icurfer <noreply@icurfer.com>
 Installed-Size: $INSTALLED_KB
-Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-4.0, gir1.2-adw-1, python3-mpv
+Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-4.0, gir1.2-adw-1, python3-mpv, ffmpeg
 Recommends: ffmpeg, fonts-noto-cjk
 Suggests: python3-venv
 Description: 국내 자막을 제대로 다루는 리눅스 미디어 플레이어

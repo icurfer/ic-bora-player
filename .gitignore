@@ -8,7 +8,6 @@ __pycache__/
 venv/
 *.egg-info/
 build/
-dist/
 
 # 검증용 임시 자막·영상 (샘플은 tests/fixtures/ 에 둔다)
 /tmp-verify/
@@ -21,6 +20,7 @@ dist/
 /.venv/
 
 # deb 빌드 중간물은 무시하되, 배포용 .deb 는 올린다
-# (56 KB 라 git 에 부담이 없고, 다른 머신에서 바로 받아 설치할 수 있다)
+# (수십 KB 라 git 에 부담이 없고, 다른 머신에서 바로 받아 설치할 수 있다)
+# ⚠ `dist/` 로 적으면 디렉터리째 제외되어 아래 `!` 예외가 먹지 않는다 — 반드시 `/dist/*`.
 /dist/*
 !/dist/*.deb
