@@ -283,17 +283,40 @@ class BoraWindow(Adw.ApplicationWindow):
         self._video.add_controller(gesture)
 
     def _on_right_click(self, _gesture, _n: int, x: float, y: float) -> None:
-        self._menu_popover.set_child(self._build_context_menu())
-        # 클릭한 점을 가리키게 한다. 폭·높이 1 짜리 사각형이면 그 지점에 붙는다.
+        menu = self._build_context_menu()
+        self._menu_popover.set_child(self._scrollable_menu(menu))
+
+        # 메뉴가 화면 밖으로 나가지 않게 가리키는 점을 안쪽으로 당긴다.
+        # position=BOTTOM 은 클릭 지점을 **가로 중앙**으로 삼으므로, 오른쪽 끝에서 열면
+        # 절반이 잘려 나가 눌러도 안 열리는 것처럼 보였다.
         #
+        # ⚠ 크기는 **자식**에서 잰다. 팝오버 자신은 아직 realize 되지 않아 0 을 준다 —
+        #    0 으로 clamp 하면 아무것도 보정되지 않는다(처음에 그렇게 짰다가 헛돌았다).
+        _minimum, natural = menu.get_preferred_size()
+        width = natural.width
+        height = min(natural.height, max(240, int(self.get_height() * 0.72)))
+        view_w, view_h = self._video.get_width(), self._video.get_height()
+
+        half = width / 2
+        at_x = min(max(x, half), max(half, view_w - half)) if view_w else x
+        # 아래로 펼 자리가 없으면 위로 편다.
+        below = view_h - y
+        if view_h and below < height and y > below:
+            self._menu_popover.set_position(Gtk.PositionType.TOP)
+            at_y = max(y, min(height, view_h))
+        else:
+            self._menu_popover.set_position(Gtk.PositionType.BOTTOM)
+            at_y = min(y, max(0, view_h - height)) if view_h else y
+
         # ⚠ `Gdk.Rectangle(x=..., y=...)` 처럼 생성자 키워드로 주면 **조용히 무시되어 (0,0)** 이 된다.
         #    (boxed 구조체라 PyGObject 가 키워드를 필드에 넣어 주지 않는다.)
         #    메뉴가 클릭한 자리가 아니라 좌상단에 뜨던 진짜 원인이었다. 필드에 직접 대입해야 한다.
         rect = Gdk.Rectangle()
-        rect.x, rect.y, rect.width, rect.height = int(x), int(y), 1, 1
+        rect.x, rect.y, rect.width, rect.height = int(at_x), int(at_y), 1, 1
         self._menu_popover.set_pointing_to(rect)
         self._menu_popover.popup()
-        log.debug("우클릭 메뉴: (%d, %d)", int(x), int(y))
+        log.debug("우클릭 메뉴: 클릭 (%d, %d) → 표시 (%d, %d), 메뉴 %dx%d, 영상 %dx%d",
+                  int(x), int(y), int(at_x), int(at_y), width, height, view_w, view_h)
 
     def _build_context_menu(self) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2,
@@ -1198,6 +1221,24 @@ class BoraWindow(Adw.ApplicationWindow):
             self.toast("핀을 지웠다")
 
     # ── 하나로 모은 메뉴 (하단 바) ───────────────────────────────────────
+    def _scrollable_menu(self, box: Gtk.Widget) -> Gtk.Widget:
+        """메뉴가 창보다 길면 **팝오버가 아예 뜨지 않는다.** 스크롤로 감싼다.
+
+        항목을 하나씩 더하다 보니 메뉴 높이가 767px 이 되어 창(560px)을 넘었고,
+        그 순간부터 버튼을 눌러도 아무 일도 일어나지 않았다. 기능이 자라면 또 넘으므로
+        길이에 상관없이 뜨도록 만든다.
+        """
+        available = max(240, int(self.get_height() * 0.72))
+        scroller = Gtk.ScrolledWindow(
+            hscrollbar_policy=Gtk.PolicyType.NEVER,
+            vscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
+            propagate_natural_height=True,
+            propagate_natural_width=True,
+            max_content_height=available,
+        )
+        scroller.set_child(box)
+        return scroller
+
     def _menu_row(self, label: str, accel: str, handler, subtitle: str = "") -> Gtk.Widget:
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
@@ -1261,7 +1302,7 @@ class BoraWindow(Adw.ApplicationWindow):
             for item in recent[:5]:
                 box.append(self._menu_row(item.title, "",
                                           lambda p=item.path: self.open_path(Path(p))))
-        self._main_popover.set_child(box)
+        self._main_popover.set_child(self._scrollable_menu(box))
 
     # ── 로그 ─────────────────────────────────────────────────────────────
     def _log_file_target(self) -> Path:
@@ -1463,9 +1504,13 @@ class BoraWindow(Adw.ApplicationWindow):
         self._pin_btn.connect("clicked", lambda *_: self.add_pin())
         box.append(self._pin_btn)
 
+        # 이 버튼은 **창 맨 아래**에 있다. 기본값(direction=down, position=bottom)이면
+        # 메뉴가 아래로 열려 화면 밖으로 나간다 — 눌러도 아무 일도 안 일어나는 것처럼 보인다.
+        # 하위 메뉴들은 _popup_submenu 에서 TOP 을 명시했는데 여기만 빠져 있었다.
         self._menu_button = Gtk.MenuButton(icon_name="open-menu-symbolic",
+                                           direction=Gtk.ArrowType.UP,
                                            tooltip_text="메뉴 — 자막·오디오·메모·화면")
-        self._main_popover = Gtk.Popover()
+        self._main_popover = Gtk.Popover(position=Gtk.PositionType.TOP)
         self._menu_button.set_popover(self._main_popover)
         self._main_popover.connect("show", lambda *_: self._rebuild_main_menu())
         box.append(self._menu_button)

@@ -48,8 +48,8 @@ Ubuntu **22.04 / 24.04 / 26.04** 를 모두 지원해야 한다. 이 제약이 �
 ### deb 로 설치 (권장)
 
 ```bash
-wget https://github.com/icurfer/ic-bora-player/raw/main/dist/bora_0.20.0_all.deb
-sudo apt install ./bora_0.20.0_all.deb
+wget https://github.com/icurfer/ic-bora-player/raw/main/dist/bora_0.20.1_all.deb
+sudo apt install ./bora_0.20.1_all.deb
 bora <영상파일>
 ```
 
