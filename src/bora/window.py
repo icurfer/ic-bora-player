@@ -16,6 +16,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
 
 from .glarea import MpvGLArea  # noqa: E402
+from . import log as logmod  # noqa: E402
 from .log import get as get_logger  # noqa: E402
 from .player import Player  # noqa: E402
 from . import desktop as desktop_setup  # noqa: E402
@@ -72,6 +73,7 @@ class BoraWindow(Adw.ApplicationWindow):
         self._more_popover = Gtk.Popover()
         self._pin_popover = Gtk.Popover()
         self._stt_popover = Gtk.Popover()
+        self._log_popover = Gtk.Popover()
 
         self._toasts = Adw.ToastOverlay()
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -159,10 +161,26 @@ class BoraWindow(Adw.ApplicationWindow):
     def _setup_keys(self) -> None:
         keys = Gtk.EventControllerKey()
         keys.connect("key-pressed", self._on_key)
+        # CAPTURE — 창이 포커스 위젯보다 **먼저** 키를 본다.
+        # 기본값 BUBBLE 이면 포커스된 버튼이 Space 를 삼켜 버튼이 눌린다
+        # (실제로 파일 열기 버튼에 포커스가 있어 Space 가 파일 탐색기를 열었다).
+        # 플레이어는 어디에 포커스가 있든 Space 가 일시정지여야 한다 — mpv·VLC 도 그렇다.
+        keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         self.add_controller(keys)
+
+    def _typing(self) -> bool:
+        """글자를 치고 있는 중인가 — 그렇다면 단축키로 가로채면 안 된다.
+
+        메모 패널(TextView)과 클립 제목·검색 같은 입력칸이 **같은 창 안에** 있다.
+        CAPTURE 로 먼저 받는 대가로, 여기서 직접 비켜 줘야 한다.
+        """
+        focus = self.get_focus()
+        return isinstance(focus, (Gtk.Editable, Gtk.TextView))
 
     def _on_key(self, _c, keyval: int, _code: int, state: Gdk.ModifierType) -> bool:
         if state & (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK):
+            return False
+        if self._typing():
             return False
         handlers = {
             Gdk.KEY_space: self.toggle_pause,
@@ -1029,6 +1047,9 @@ class BoraWindow(Adw.ApplicationWindow):
             f"{len(self._clips)}개 담김" if self._clips else "구간을 담아 파일로 꺼낸다"))
         box.append(self._menu_row("스크린샷", "C", lambda: self.take_screenshot(True)))
         box.append(self._menu_row("파일 열기", "O", self.choose_file))
+        box.append(self._menu_row(
+            "로그", "", self._show_log_menu,
+            dict((l[0], l[1]) for l in logmod.LEVELS).get(logmod.level_name(), "")))
 
         recent = self.state.recent_items()
         if recent:
@@ -1039,6 +1060,61 @@ class BoraWindow(Adw.ApplicationWindow):
                 box.append(self._menu_row(item.title, "",
                                           lambda p=item.path: self.open_path(Path(p))))
         self._main_popover.set_child(box)
+
+    # ── 로그 ─────────────────────────────────────────────────────────────
+    def _log_file_target(self) -> Path:
+        """로그를 남길 파일. 설정 폴더에 둔다 — 지워도 앱에 지장이 없다."""
+        return self.state.dir / "bora.log"
+
+    def _show_log_menu(self) -> None:
+        self._popup_submenu(self._log_popover, self._rebuild_log_menu)
+
+    def _rebuild_log_menu(self) -> None:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
+                      margin_top=10, margin_bottom=10, margin_start=10, margin_end=10,
+                      width_request=300)
+        box.append(Gtk.Label(label="얼마나 자세히 남길까", xalign=0,
+                             css_classes=["dim-label"]))
+        current = logmod.level_name()
+        group = None
+        for name, title, hint in logmod.LEVELS:
+            button = Gtk.CheckButton(label=f"{title} — {hint}")
+            if group is None:
+                group = button
+            else:
+                button.set_group(group)
+            button.set_active(name == current)
+            button.connect("toggled", self._on_log_level, name)
+            box.append(button)
+
+        box.append(Gtk.Separator(margin_top=4, margin_bottom=4))
+        to_file = Gtk.CheckButton(label="파일로도 남기기")
+        to_file.set_active(bool(logmod.log_file_path()))
+        to_file.connect("toggled", self._on_log_to_file)
+        box.append(to_file)
+        where = logmod.log_file_path() or str(self._log_file_target())
+        box.append(Gtk.Label(label=where, xalign=0, wrap=True, selectable=True,
+                             css_classes=["dim-label"]))
+        self._log_popover.set_child(box)
+
+    def _on_log_level(self, button: Gtk.CheckButton, name: str) -> None:
+        if not button.get_active():
+            return
+        self.state.settings.log_level = logmod.set_level(name)
+        self.state.save()
+        self.toast(f"로그: {dict((l[0], l[1]) for l in logmod.LEVELS)[name]}")
+
+    def _on_log_to_file(self, button: Gtk.CheckButton) -> None:
+        want = button.get_active()
+        self.state.settings.log_to_file = want
+        if want:
+            path = logmod.add_log_file(str(self._log_file_target()))
+            self.toast(f"로그를 파일에도 남긴다 — {path}" if path else "로그 파일을 열지 못했다")
+        else:
+            # 핸들러를 떼는 것까지는 하지 않는다 — 이미 열린 파일을 닫는 경계가 지저분하고,
+            # 다음 실행부터 안 남기면 충분하다. 그 사실을 사용자에게 그대로 말한다.
+            self.toast("다음 실행부터 파일에 남기지 않는다")
+        self.state.save()
 
     def _popup_submenu(self, popover: Gtk.Popover, build) -> None:
         """하위 메뉴를 메뉴 버튼 자리에 띄운다."""
@@ -1202,6 +1278,12 @@ class BoraWindow(Adw.ApplicationWindow):
     # ── 설정·기록 ────────────────────────────────────────────────────────
     def _apply_settings(self) -> None:
         st = self.state.settings
+        # 설정에 값이 있으면 명령줄·환경변수보다 이긴다. 비어 있으면 건드리지 않는다
+        # (그래야 `--debug` 로 띄운 세션이 설정 때문에 조용해지지 않는다).
+        if st.log_level:
+            logmod.set_level(st.log_level)
+        if st.log_to_file and not logmod.log_file_path():
+            logmod.add_log_file(str(self._log_file_target()))
         self.player.speed = st.speed
         self.player.volume = st.volume
         self.player.set_sub_style(font=st.sub_font, size=st.sub_font_size,

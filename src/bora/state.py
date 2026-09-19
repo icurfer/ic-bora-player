@@ -92,6 +92,9 @@ class Settings:
     sub_pos: float = 100.0          # 0 = 화면 위, 100 = 기본(아래)
     ai_model: str = "claude-opus-5"
     screenshot_dir: str = ""
+    # 로그 등급. 빈 값이면 명령줄(--debug)·환경변수(BORA_DEBUG)가 정한 대로 둔다.
+    log_level: str = ""
+    log_to_file: bool = False
     volume: float = 100.0
     # 기본 영상 플레이어를 Bora 로 바꾸기 전의 값. 끌 때 정확히 되돌리려고 들고 있는다.
     previous_defaults: dict = field(default_factory=dict)

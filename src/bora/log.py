@@ -7,6 +7,10 @@ mpv 로그를 파이썬 로거로 끌어온다.
   PYTHONPATH=src python3 -m bora --debug <파일>
   BORA_DEBUG=1 PYTHONPATH=src python3 -m bora <파일>
   BORA_LOG_FILE=/tmp/bora.log ...      # 파일로도 남긴다
+
+앱 안에서도 바꿀 수 있다(메뉴 → 로그). `set_level()` 은 **즉시** 적용된다 —
+버그는 재현되는 그 순간에 등급을 올려야 잡히지, 재시작하면 증상이 사라진다.
+명령줄·환경변수는 시작 등급을 정하고, 설정은 그 뒤로 이긴다.
 """
 
 from __future__ import annotations
@@ -64,6 +68,65 @@ def setup(debug: bool | None = None) -> logging.Logger:
     logger.propagate = False
     logger._bora_configured = True          # type: ignore[attr-defined]
     return logger
+
+
+# 설정에 보여 줄 등급. 값은 state.json 에 문자열로 저장한다.
+LEVELS = (
+    ("warning", "조용히", "문제가 있을 때만 (기본)"),
+    ("info", "보통", "무엇을 열고 무엇을 했는지"),
+    ("debug", "자세히", "libmpv 로그까지 — 버그 잡을 때"),
+)
+_LEVEL_VALUES = {
+    "warning": logging.WARNING,
+    "info": logging.INFO,
+    "debug": logging.DEBUG,
+}
+
+
+def level_name(logger: logging.Logger | None = None) -> str:
+    """지금 등급의 설정용 이름."""
+    value = (logger or get()).getEffectiveLevel()
+    for name, number in _LEVEL_VALUES.items():
+        if number == value:
+            return name
+    return "debug" if value <= logging.DEBUG else "warning"
+
+
+def set_level(name: str) -> str:
+    """등급을 **즉시** 바꾼다. 알 수 없는 이름은 무시하고 현재 등급을 돌려준다."""
+    number = _LEVEL_VALUES.get((name or "").lower())
+    logger = get()
+    if number is None:
+        return level_name(logger)
+    logger.setLevel(number)
+    logger.log(max(number, logging.INFO), "로그 등급: %s", name)
+    return name
+
+
+def log_file_path() -> str:
+    """파일로도 남기고 있다면 그 경로. 설정 화면에서 '어디를 보면 되는지' 알려 준다."""
+    for handler in get().handlers:
+        if isinstance(handler, logging.FileHandler):
+            return handler.baseFilename
+    return ""
+
+
+def add_log_file(path: str) -> str:
+    """로그를 파일로도 남기기 시작한다. 실패하면 빈 문자열."""
+    logger = get()
+    existing = log_file_path()
+    if existing == str(path):
+        return existing
+    fmt = logging.Formatter("%(asctime)s %(levelname)-5s [%(name)s] %(message)s", "%H:%M:%S")
+    try:
+        handler = logging.FileHandler(path, encoding="utf-8")
+    except OSError as exc:
+        logger.warning("로그 파일을 열지 못했다 %s: %s", path, exc)
+        return ""
+    handler.setFormatter(fmt)
+    logger.addHandler(handler)
+    logger.info("로그 파일: %s", path)
+    return str(path)
 
 
 def get(name: str = "") -> logging.Logger:
