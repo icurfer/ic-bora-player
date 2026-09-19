@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import bisect
 import hashlib
 import queue
 import subprocess
@@ -54,6 +55,8 @@ class ThumbStrip:
         self.video = Path(video)
         self.on_ready = on_ready
         self._cache: dict[float, GdkPixbuf.Pixbuf] = {}
+        self._keys: list[float] = []            # 가까운 것 찾기용 — 정렬해 둔다
+        self._keys_dirty = True
         self._missing: set[float] = set()       # 뽑아 봤지만 실패한 것 — 다시 시도하지 않는다
         self._queue: queue.Queue = queue.Queue()
         self._pending: set[float] = set()
@@ -63,8 +66,36 @@ class ThumbStrip:
         self._dir = cache_dir(self.video)
 
     # ── 바깥에서 쓰는 것 ─────────────────────────────────────────────────
-    def get(self, seconds: float) -> GdkPixbuf.Pixbuf | None:
-        return self._cache.get(snap(seconds))
+    def get(self, seconds: float, tolerance: float = 0.0) -> GdkPixbuf.Pixbuf | None:
+        """그 시각의 썸네일. `tolerance` 안이면 **가장 가까운 것**으로 대신한다.
+
+        요청할 때의 격자와 그릴 때의 격자를 정확히 맞추려 했더니 깨졌다 —
+        요청은 시간을 등분하고(예: 630.9초 간격) 그리기는 픽셀 폭으로 걷는데(107px =
+        632.9초), 반올림 차이가 누적돼 캐시 키가 631 인데 633 을 찾는 일이 생긴다.
+        화면 전체가 빈칸으로 남았다. 축소한 뷰에서는 몇 초 어긋난 그림이어도 상관없으므로
+        가까운 것을 쓴다.
+        """
+        exact = self._cache.get(snap(seconds))
+        if exact is not None or tolerance <= 0:
+            return exact
+        with self._lock:
+            keys = self._sorted_keys()
+        if not keys:
+            return None
+        index = bisect.bisect_left(keys, seconds)
+        best, distance = None, tolerance
+        for candidate in (index - 1, index):
+            if 0 <= candidate < len(keys):
+                gap = abs(keys[candidate] - seconds)
+                if gap <= distance:
+                    best, distance = keys[candidate], gap
+        return self._cache.get(best) if best is not None else None
+
+    def _sorted_keys(self) -> list[float]:
+        if self._keys_dirty:
+            self._keys = sorted(self._cache)
+            self._keys_dirty = False
+        return self._keys
 
     def request(self, times: list[float]) -> None:
         """이 시각들이 필요하다. 이미 있거나 줄 서 있는 것은 건너뛴다."""
@@ -120,6 +151,7 @@ class ThumbStrip:
                 self._pending.discard(at)
                 if pixbuf is not None:
                     self._cache[at] = pixbuf
+                    self._keys_dirty = True
                 else:
                     self._missing.add(at)
             if pixbuf is not None and self.on_ready:

@@ -57,6 +57,8 @@ class TimelineView(Gtk.DrawingArea):
         self._drag_index = -1
         self._drag_from = 0.0
         self._pending_request = 0
+        self._tiles = [0, 0]
+        self._last_tiles = [-1, -1]
 
         self.set_draw_func(self._draw)
 
@@ -187,6 +189,7 @@ class TimelineView(Gtk.DrawingArea):
 
         self._draw_ruler(cr, width)
         self._request_visible_thumbs(width)
+        self._tiles = [0, 0]            # 채운 칸 / 빈 칸 — 왜 안 보이는지 물을 때 쓴다
 
         top, bottom = STRIP_TOP, STRIP_TOP + STRIP_HEIGHT
         for index, clip in enumerate(self.model):
@@ -194,6 +197,12 @@ class TimelineView(Gtk.DrawingArea):
             if x1 < -2 or x0 > width + 2:
                 continue
             self._draw_clip(cr, index, clip, x0, x1, top, bottom)
+
+        if self._tiles != self._last_tiles:
+            self._last_tiles = list(self._tiles)
+            log.debug("필름스트립: 채움 %d · 빈칸 %d (폭 %d, 캐시 %d장)",
+                      self._tiles[0], self._tiles[1], width,
+                      len(self.thumbs._cache) if self.thumbs else 0)
 
         # 재생헤드 — 맨 위에 그린다
         head = self._x_of(self.position)
@@ -212,15 +221,20 @@ class TimelineView(Gtk.DrawingArea):
 
         # 필름스트립
         if self.thumbs is not None:
+            # 타일 하나가 덮는 시간만큼은 어긋나도 그 그림을 쓴다 — 격자가 정확히
+            # 맞기를 기대하면 반올림 차이로 전부 빈칸이 된다(thumbs.get 주석 참고).
+            tolerance = max(1.0, self._span() / max(1, self.get_width()) * THUMB_HEIGHT * 2)
             x = x0
             while x < x1:
                 at = self._time_of(x)
-                pixbuf = self.thumbs.get(at)
+                pixbuf = self.thumbs.get(at, tolerance)
                 if pixbuf is not None:
                     Gdk.cairo_set_source_pixbuf(cr, pixbuf, x, top)
                     cr.paint()
+                    self._tiles[0] += 1
                     x += pixbuf.get_width()
                 else:
+                    self._tiles[1] += 1
                     cr.set_source_rgb(0.2, 0.2, 0.23)
                     cr.rectangle(x, top, THUMB_HEIGHT * 1.78, bottom - top)
                     cr.fill()
@@ -272,8 +286,10 @@ class TimelineView(Gtk.DrawingArea):
     def _request_span(self, start: float, end: float, count: int) -> None:
         if self.thumbs is None or count <= 0:
             return
+        # 끝을 살짝 넘겨 요청하면 ffmpeg 이 빈손으로 돌아온다(코드 234). 안쪽으로 접는다.
+        limit = max(0.0, (self.model.duration if self.model else end) - 0.5)
         step = max(0.5, (end - start) / count)
-        times = [start + step * i for i in range(count + 1)]
+        times = [min(start + step * i, limit) for i in range(count + 1)]
         # 연달아 부르면 스크롤 중에 큐가 터진다. 살짝 미뤄 마지막 것만 보낸다.
         if self._pending_request:
             GLib.source_remove(self._pending_request)

@@ -269,3 +269,46 @@ def test_remove_lets_the_neighbour_absorb() -> None:
     t.remove(1)
     assert [(c.start, c.end) for c in t] == [(0, 100)]
     assert not t.remove(0)                   # 마지막 하나는 남긴다
+
+
+# ── 썸네일 조회 (기획 v0.5) ──────────────────────────────────────────────
+from bora.clip.thumbs import ThumbStrip, snap  # noqa: E402
+
+
+def _strip_with(times):
+    strip = ThumbStrip(Path("/nonexistent.mkv"))
+    for t in times:
+        strip._cache[float(t)] = f"thumb@{t:.0f}"
+    strip._keys_dirty = True
+    return strip
+
+
+def test_exact_hit() -> None:
+    strip = _strip_with([0, 631, 1262])
+    assert strip.get(631.0) == "thumb@631"
+
+
+def test_off_by_rounding_misses_without_tolerance() -> None:
+    """이게 실제 버그였다 — 요청 격자는 630.9초 간격인데 그리기는 픽셀 폭으로 걸어
+    633 을 찾았고, 화면 전체가 빈칸으로 남았다."""
+    strip = _strip_with([0, 631, 1262])
+    assert strip.get(633.0) is None
+
+
+def test_tolerance_uses_the_nearest() -> None:
+    strip = _strip_with([0, 631, 1262])
+    assert strip.get(633.0, 120) == "thumb@631"
+    assert strip.get(1200.0, 120) == "thumb@1262"
+
+
+def test_tolerance_does_not_reach_too_far() -> None:
+    """너무 먼 그림을 끌어다 쓰면 엉뚱한 장면이 보인다."""
+    strip = _strip_with([0, 631, 1262])
+    assert strip.get(1000.0, 120) is None
+    assert strip.get(4000.0, 300) is None
+
+
+def test_snap_quantises_to_one_second() -> None:
+    assert snap(631.4) == 631.0
+    assert snap(631.6) == 632.0
+    assert snap(-5) == 0.0
