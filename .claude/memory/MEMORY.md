@@ -11,4 +11,8 @@
 - [완료 전 검증](feedback_verify_before_done.md) — 끝까지 돌려보고 나서 완료라고 말한다
 - [사이클 끝은 push](feedback_push_is_one_cycle.md) — 코드·문서 함께, 관련 변경은 한 번의 버전 bump
 
-<!-- project_* / reference_* / user_* 메모리는 생기는 대로 아래에 추가한다. -->
+## 이 저장소의 사실 (project)
+- [GUI 검증의 사각지대](project_gui_verification_blind_spots.md) — 키 경로·화면 밖·창 미매핑 셋은 자동으로 못 본다
+- [고친 것이 고친 것을 깨뜨린다](project_fix_breaks_fix.md) — 갱신 주기를 바꾸면 거기 얹힌 디바운스가 굶는다
+
+<!-- reference_* / user_* 메모리는 생기는 대로 아래에 추가한다. -->
