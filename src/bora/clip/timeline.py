@@ -59,6 +59,9 @@ class TimelineView(Gtk.DrawingArea):
         self._pending_request = 0
         self._tiles = [0, 0]
         self._last_tiles = [-1, -1]
+        self._tick_id = 0
+        self._position_source = None
+        self._last_view: tuple | None = None
 
         self.set_draw_func(self._draw)
 
@@ -91,6 +94,7 @@ class TimelineView(Gtk.DrawingArea):
         self.position = 0.0
         self.selected = -1
         self.view_start, self.view_end = 0.0, duration or 1.0
+        self._last_view = None
         # 첫 요청은 draw 를 기다리지 않는다 — 창이 아직 매핑되지 않았으면 draw 가
         # 불리지 않아 필름스트립이 영영 비어 있게 된다(실제로 그랬다).
         self._request_span(self.view_start, self.view_end, PREFETCH)
@@ -98,6 +102,7 @@ class TimelineView(Gtk.DrawingArea):
         return self.model
 
     def unload(self) -> None:
+        self.unfollow()
         if self.thumbs is not None:
             self.thumbs.close()
             self.thumbs = None
@@ -109,6 +114,29 @@ class TimelineView(Gtk.DrawingArea):
             return
         self.position = seconds
         self.queue_draw()
+
+    def follow(self, source) -> None:
+        """재생 위치를 **프레임마다** 읽어 재생헤드를 움직인다.
+
+        창의 250ms 폴링에 얹으면 선이 뚝뚝 끊겨 보인다. 프레임 클록에 맞추면
+        화면 주사율대로 흐른다. `source()` 는 지금 위치(초)나 None 을 준다.
+        """
+        self.unfollow()
+        self._position_source = source
+        self._tick_id = self.add_tick_callback(self._on_frame)
+
+    def unfollow(self) -> None:
+        if self._tick_id:
+            self.remove_tick_callback(self._tick_id)
+            self._tick_id = 0
+        self._position_source = None
+
+    def _on_frame(self, _widget, _clock) -> bool:
+        if self._position_source is not None:
+            now = self._position_source()
+            if now is not None:
+                self.set_position(now)
+        return GLib.SOURCE_CONTINUE
 
     def split_here(self) -> bool:
         if self.model is None:
@@ -219,8 +247,9 @@ class TimelineView(Gtk.DrawingArea):
         cr.rectangle(x0, top, max(1.0, x1 - x0), bottom - top)
         cr.clip()
 
-        # 필름스트립
-        if self.thumbs is not None:
+        # 필름스트립 — 지운 구간에는 그리지 않는다. 편집기들이 그러듯 검은 자리로 남겨야
+        # 무엇이 빠졌는지 한눈에 보인다(반투명으로 덮었더니 그림이 비쳐 헷갈렸다).
+        if self.thumbs is not None and clip.enabled:
             # 타일 하나가 덮는 시간만큼은 어긋나도 그 그림을 쓴다 — 격자가 정확히
             # 맞기를 기대하면 반올림 차이로 전부 빈칸이 된다(thumbs.get 주석 참고).
             tolerance = max(1.0, self._span() / max(1, self.get_width()) * THUMB_HEIGHT * 2)
@@ -242,10 +271,18 @@ class TimelineView(Gtk.DrawingArea):
         cr.restore()
 
         if not clip.enabled:
-            # 지운 구간 — 덮어서 죽인다. 지우지 않고 남기는 이유는 되살리려고.
-            cr.set_source_rgba(0.05, 0.05, 0.06, 0.78)
+            # 지운 구간 — 완전히 검은 자리. 목록에서 빼지 않고 남기는 이유는 되살리려고다.
+            cr.set_source_rgb(0.0, 0.0, 0.0)
             cr.rectangle(x0, top, max(1.0, x1 - x0), bottom - top)
             cr.fill()
+            width = x1 - x0
+            if width > 54:
+                cr.set_source_rgba(1, 1, 1, 0.45)
+                cr.set_font_size(11)
+                extents = cr.text_extents("삭제됨")
+                cr.move_to(x0 + (width - extents.width) / 2,
+                           top + (bottom - top + extents.height) / 2)
+                cr.show_text("삭제됨")
 
         # 테두리 — 선택된 것만 밝게
         chosen = index == self.selected
@@ -278,7 +315,16 @@ class TimelineView(Gtk.DrawingArea):
             at += step
 
     def _request_visible_thumbs(self, width: int) -> None:
-        """보이는 범위만 요청한다 — 전체를 미리 뽑으면 5분이 걸린다(실측 §5)."""
+        """보이는 범위만 요청한다 — 전체를 미리 뽑으면 5분이 걸린다(실측 §5).
+
+        ⚠ **뷰가 바뀌었을 때만 실제로 요청한다.** 요청은 120ms 뒤로 미뤄 두는데
+        (스크롤 중 큐가 터지지 않게), 재생헤드가 프레임마다 다시 그리면 그 타이머가
+        매번 새로 밀려 영영 발동하지 않는다. 실제로 재생 중에는 한 장도 안 뽑혔다.
+        """
+        view = (round(self.view_start, 2), round(self.view_end, 2), width)
+        if view == self._last_view:
+            return
+        self._last_view = view
         tile = THUMB_HEIGHT * 1.78
         count = max(1, int(width / tile) + 1)
         self._request_span(self.view_start, self.view_end, count)

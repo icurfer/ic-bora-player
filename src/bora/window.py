@@ -978,6 +978,8 @@ class BoraWindow(Adw.ApplicationWindow):
             return
         self._timeline.load(self._current, duration)
         self._timeline.set_position(self.player.time_pos or 0.0)
+        # 재생헤드는 프레임 클록에 맞춰 스스로 따라간다 — 창의 250ms 폴링에 얹으면 끊긴다.
+        self._timeline.follow(lambda: self.player.time_pos)
         self._edit_revealer.set_reveal_child(True)
         self._sync_edit_bar()
         self.toast("편집: S 자르기 · Delete 지우기 · Ctrl+Z 되돌리기")
@@ -1640,10 +1642,8 @@ class BoraWindow(Adw.ApplicationWindow):
         if pos is not None and not self._seeking:
             self._seek.set_value(pos)
             self._pos_label.set_label(_fmt_time(pos))
-        if self.editing and pos is not None:
-            self._timeline.set_position(pos)
-            if self._preview:
-                self._preview_step()
+        if self.editing and pos is not None and self._preview:
+            self._preview_step()
         self._sync_play_button()
         a, b = self.player.loop_a, self.player.loop_b
         if a is not None and b is not None:

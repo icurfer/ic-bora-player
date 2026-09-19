@@ -11,6 +11,7 @@ T5 Ctrl+Z 로 자르기·삭제가 되돌아간다
 T6 미리보기가 잘린 자리를 건너뛴다
 T7 내보내기가 남은 구간만 넘긴다
 T8 접혀 있을 때는 S 가 정지, 펴져 있을 때는 자르기
+T9 재생헤드가 프레임 클록을 타고 매끄럽게 따라간다 (접으면 멈춘다)
 """
 import shutil
 import subprocess
@@ -176,6 +177,19 @@ def main() -> int:
                       eaten and len(tl.model) == n + 1,
                       f"가로챔={eaten}, {n} -> {len(tl.model)}개")
 
+                # T9 — 재생헤드가 프레임마다 따라오나
+                check("T9 재생헤드가 재생 위치를 따라간다", tl._tick_id != 0,
+                      "follow 안 걸림" if not tl._tick_id else "")
+                win.player.paused = False
+                seen = []
+                for _ in range(8):
+                    pump(0.25)
+                    seen.append(round(tl.position, 2))
+                moved = len(set(seen))
+                check("T9 재생헤드가 매끄럽게 움직인다", moved >= 6,
+                      f"2초 동안 서로 다른 값 {moved}/8")
+                win.player.paused = True
+
                 # 닫을 때 편집 중이면 묻는다
                 win.toggle_edit()
                 asked = win.editing
@@ -183,6 +197,7 @@ def main() -> int:
                 check("편집 중 접으면 한 번 확인한다",
                       asked and not win.editing,
                       "첫 시도에 접히지 않음" if asked else "바로 접혔다")
+                check("T9 접으면 재생헤드 추적이 멈춘다", tl._tick_id == 0)
 
         Probe(non_unique=True).run([sys.argv[0], str(video)])
     finally:

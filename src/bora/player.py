@@ -333,6 +333,12 @@ class Player:
     def paused(self) -> bool:
         return bool(self._mpv.pause)
 
+    @paused.setter
+    def paused(self, value: bool) -> None:
+        """읽기만 되고 쓰기가 안 되면 `toggle_pause()` 로 에둘러야 한다 —
+        "지금 상태와 무관하게 재생시켜라"를 쓰려면 이쪽이 맞다."""
+        self._mpv.pause = bool(value)
+
     @property
     def duration(self) -> float | None:
         return self._mpv.duration
