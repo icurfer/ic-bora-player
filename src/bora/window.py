@@ -21,6 +21,7 @@ from .log import get as get_logger  # noqa: E402
 from .player import Player  # noqa: E402
 from . import desktop as desktop_setup  # noqa: E402
 from .clip import ClipList, ClipWindow  # noqa: E402
+from .clip.timeline import TimelineView  # noqa: E402
 from .clip.model import DEFAULT_SPAN, Clip  # noqa: E402
 from .editor import EditorWindow  # noqa: E402
 from .notes import NoteDocument, NotePanel  # noqa: E402
@@ -111,6 +112,20 @@ class BoraWindow(Adw.ApplicationWindow):
         )
         root.append(self._controls_revealer)
 
+        # 편집 타임라인 — **접힌 상태가 기본**이다. 그냥 볼 때 화면을 빼앗으면 안 된다
+        # (이 앱은 여전히 플레이어다 — 기획서 v0.5 §2).
+        self._timeline = TimelineView(on_seek=self._on_timeline_seek,
+                                      on_changed=self._on_timeline_changed,
+                                      on_scrub=self._on_timeline_scrub)
+        self._edit_revealer = Gtk.Revealer(
+            child=self._build_edit_area(),
+            transition_type=Gtk.RevealerTransitionType.SLIDE_UP,
+            transition_duration=self.UI_TRANSITION_MS,
+            reveal_child=False,
+        )
+        root.append(self._edit_revealer)
+        self._preview = False           # 미리보기 중이면 잘린 자리를 건너뛴다
+
         self._apply_settings()
 
         # 재생 위치는 폴링으로 갱신한다. mpv 의 time-pos 변화를 구독하면 초당 수십 번
@@ -178,10 +193,26 @@ class BoraWindow(Adw.ApplicationWindow):
         return isinstance(focus, (Gtk.Editable, Gtk.TextView))
 
     def _on_key(self, _c, keyval: int, _code: int, state: Gdk.ModifierType) -> bool:
+        if state & Gdk.ModifierType.CONTROL_MASK and not self._typing():
+            shift = bool(state & Gdk.ModifierType.SHIFT_MASK)
+            if keyval in (Gdk.KEY_e, Gdk.KEY_E):
+                self.toggle_edit()
+                return True
+            if keyval in (Gdk.KEY_z, Gdk.KEY_Z) and self.editing:
+                self.redo_edit() if shift else self.undo_edit()
+                return True
         if state & (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK):
             return False
         if self._typing():
             return False
+        if self.editing:
+            # 타임라인이 펴져 있을 때만 편집 키가 이긴다. 접혀 있으면 S 는 그대로 정지다.
+            if keyval in (Gdk.KEY_s, Gdk.KEY_S):
+                self.split_clip()
+                return True
+            if keyval in (Gdk.KEY_Delete, Gdk.KEY_BackSpace):
+                self.delete_clip()
+                return True
         handlers = {
             Gdk.KEY_space: self.toggle_pause,
             Gdk.KEY_s: self.stop,
@@ -284,6 +315,7 @@ class BoraWindow(Adw.ApplicationWindow):
             ("핀만 꽂기", "Shift+P", lambda: self.add_pin(write_title=False)),
             ("핀 목록", "", self._show_pin_menu),
             (None, None, None),
+            ("편집 타임라인", "Ctrl+E", self.toggle_edit),
             ("이 구간 클립으로 담기", "K", lambda: self.add_clip()),
             ("클립 목록", "Shift+K", self.show_clips),
             (None, None, None),
@@ -861,6 +893,173 @@ class BoraWindow(Adw.ApplicationWindow):
                 self._loop_btn.set_tooltip_text("구간 반복 (A)")
             self._loop_btn.remove_css_class("suggested-action")
 
+    # ── 편집 타임라인 (기획서 v0.5) ──────────────────────────────────────
+    def _build_edit_area(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4,
+                      margin_start=6, margin_end=6, margin_bottom=6)
+
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        def tool(icon, tip, handler, label=""):
+            button = Gtk.Button(icon_name=icon, tooltip_text=tip) if not label else \
+                Gtk.Button(label=label, tooltip_text=tip)
+            button.connect("clicked", lambda *_: handler())
+            bar.append(button)
+            return button
+
+        tool("edit-cut-symbolic", "재생헤드에서 자르기 (S)", self.split_clip)
+        self._del_btn = tool("user-trash-symbolic", "선택한 구간 지우기/되살리기 (Delete)",
+                             self.delete_clip)
+        bar.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
+        self._undo_btn = tool("edit-undo-symbolic", "되돌리기 (Ctrl+Z)", self.undo_edit)
+        self._redo_btn = tool("edit-redo-symbolic", "다시 실행 (Ctrl+Shift+Z)", self.redo_edit)
+        bar.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
+        tool("zoom-out-symbolic", "축소", lambda: self._timeline.zoom(1 / 1.6))
+        tool("zoom-in-symbolic", "확대", lambda: self._timeline.zoom(1.6))
+        tool("zoom-fit-best-symbolic", "전체 보기", self._timeline.zoom_fit)
+
+        self._edit_summary = Gtk.Label(xalign=0, hexpand=True,
+                                       css_classes=["dim-label"])
+        bar.append(self._edit_summary)
+
+        self._preview_btn = Gtk.ToggleButton(label="미리보기",
+                                             tooltip_text="남은 구간만 이어서 재생한다")
+        self._preview_btn.connect("toggled", self._on_preview_toggled)
+        bar.append(self._preview_btn)
+        export = Gtk.Button(label="내보내기", css_classes=["suggested-action"])
+        export.connect("clicked", lambda *_: self.export_timeline())
+        bar.append(export)
+
+        box.append(bar)
+        box.append(self._timeline)
+        return box
+
+    @property
+    def editing(self) -> bool:
+        return self._edit_revealer.get_reveal_child()
+
+    def toggle_edit(self) -> None:
+        """타임라인을 펴고 접는다 (Ctrl+E)."""
+        if self.editing:
+            if not self._confirm_discard_edit():
+                return
+            self._edit_revealer.set_reveal_child(False)
+            self._preview_btn.set_active(False)
+            self._timeline.unload()
+            return
+        if self._current is None:
+            self.toast("영상을 먼저 열어라")
+            return
+        duration = self.player.duration or 0.0
+        if duration <= 0:
+            self.toast("영상 길이를 아직 모른다 — 잠시 뒤에 다시")
+            return
+        self._timeline.load(self._current, duration)
+        self._timeline.set_position(self.player.time_pos or 0.0)
+        self._edit_revealer.set_reveal_child(True)
+        self._sync_edit_bar()
+        self.toast("편집: S 자르기 · Delete 지우기 · Ctrl+Z 되돌리기")
+
+    def _confirm_discard_edit(self) -> bool:
+        """편집 중이면 한 번 묻는다. 지금은 토스트로 알리고 접지 않는다.
+
+        v0.4 와 달리 작업이 길어질 수 있어 말없이 버리면 안 된다(기획서 v0.5 §4-2).
+        """
+        model = self._timeline.model
+        if model is None or not model.dirty:
+            return True
+        if getattr(self, "_edit_close_asked", False):
+            self._edit_close_asked = False
+            return True
+        self._edit_close_asked = True
+        self.toast("편집한 내용이 사라진다 — 접으려면 한 번 더 누르고, 남기려면 내보내라")
+        return False
+
+    def split_clip(self) -> None:
+        if not self.editing:
+            return
+        if self._timeline.split_here():
+            self._sync_edit_bar()
+        else:
+            self.toast("여기서는 자를 수 없다 (구간 경계에 너무 가깝다)")
+
+    def delete_clip(self) -> None:
+        if not self.editing:
+            return
+        if not self._timeline.delete_selected():
+            self.toast("지울 구간을 먼저 고르라 (타임라인에서 클릭)")
+            return
+        self._sync_edit_bar()
+
+    def undo_edit(self) -> None:
+        if self.editing and not self._timeline.undo():
+            self.toast("되돌릴 것이 없다")
+
+    def redo_edit(self) -> None:
+        if self.editing and not self._timeline.redo():
+            self.toast("다시 실행할 것이 없다")
+
+    def _on_timeline_seek(self, seconds: float, scrub: bool = False) -> None:
+        self.player.seek_absolute(seconds)
+
+    def _on_timeline_scrub(self, seconds: float) -> None:
+        """경계를 끄는 동안 그 프레임을 보여 준다 — 이게 돼야 감이 잡힌다(T3)."""
+        self.player.seek_absolute(seconds)
+
+    def _on_timeline_changed(self) -> None:
+        self._sync_edit_bar()
+
+    def _sync_edit_bar(self) -> None:
+        model = self._timeline.model
+        if model is None:
+            return
+        kept = len(model.enabled_clips())
+        self._edit_summary.set_label(
+            f"구간 {kept}/{len(model)} · 결과 {_fmt_time(model.output_duration())}")
+        self._undo_btn.set_sensitive(model.can_undo)
+        self._redo_btn.set_sensitive(model.can_redo)
+
+    def _on_preview_toggled(self, button: Gtk.ToggleButton) -> None:
+        self._preview = button.get_active()
+        model = self._timeline.model
+        if self._preview and model is not None:
+            first = model.enabled_clips()
+            if not first:
+                self.toast("남은 구간이 없다")
+                button.set_active(False)
+                return
+            self.player.seek_absolute(first[0].start)
+            self.player.paused = False
+
+    def _preview_step(self) -> None:
+        """잘린 자리에 들어서면 다음 구간으로 건너뛴다.
+
+        mpv 의 ab-loop 은 구간이 하나뿐이라 쓸 수 없다. 경계에서 순간 끊기지만
+        **결과 확인용으로는 충분하다** — 내보낸 파일은 끊기지 않는다(실측 D).
+        """
+        model = self._timeline.model
+        if model is None:
+            return
+        now = self.player.time_pos
+        if now is None:
+            return
+        target = model.next_enabled_start(now)
+        if target is not None and abs(target - now) > 0.05:
+            self.player.seek_absolute(target)
+
+    def export_timeline(self) -> None:
+        """타임라인의 남은 구간을 클립 목록으로 옮겨 기존 내보내기 창에 넘긴다."""
+        model = self._timeline.model
+        if model is None:
+            return
+        kept = model.enabled_clips()
+        if not kept:
+            self.toast("남은 구간이 없다")
+            return
+        self._clips.clear()
+        for clip in kept:
+            self._clips.add(Clip(clip.start, clip.end, clip.title))
+        self.show_clips()
+
     # ── 클립 (기획서 v0.4) ───────────────────────────────────────────────
     @property
     def current_path(self) -> Path | None:
@@ -1043,8 +1242,11 @@ class BoraWindow(Adw.ApplicationWindow):
         box.append(self._menu_row("핀 목록", "", self._show_pin_menu,
                                   f"{len(pins)}개" if pins else "꽂은 핀 없음"))
         box.append(self._menu_row(
-            "클립 — 잘라내기·이어붙이기", "K", self.show_clips,
-            f"{len(self._clips)}개 담김" if self._clips else "구간을 담아 파일로 꺼낸다"))
+            "편집 타임라인", "Ctrl+E", self.toggle_edit,
+            "접는다" if self.editing else "자르고 지워서 남길 것을 만든다"))
+        box.append(self._menu_row(
+            "클립 목록", "Shift+K", self.show_clips,
+            f"{len(self._clips)}개 담김" if self._clips else "담아 둔 구간"))
         box.append(self._menu_row("스크린샷", "C", lambda: self.take_screenshot(True)))
         box.append(self._menu_row("파일 열기", "O", self.choose_file))
         box.append(self._menu_row(
@@ -1393,6 +1595,10 @@ class BoraWindow(Adw.ApplicationWindow):
         if pos is not None and not self._seeking:
             self._seek.set_value(pos)
             self._pos_label.set_label(_fmt_time(pos))
+        if self.editing and pos is not None:
+            self._timeline.set_position(pos)
+            if self._preview:
+                self._preview_step()
         self._sync_play_button()
         a, b = self.player.loop_a, self.player.loop_b
         if a is not None and b is not None:

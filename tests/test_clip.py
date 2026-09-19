@@ -141,3 +141,131 @@ def test_encode_command_uses_encoder() -> None:
     job = ExportJob(Path("in.mkv"), [Clip(10, 20)], Path("out.mkv"), mode="encode")
     command = runner._cut_command(job, job.clips[0], Path("t.mkv"))
     assert "libx264" in command and "aac" in command
+
+
+# ── 타임라인 (기획 v0.5) ─────────────────────────────────────────────────
+from bora.clip.model import Timeline  # noqa: E402
+
+
+def test_starts_as_one_whole_clip() -> None:
+    """v0.4 와 기본이 반대다 — 전체가 놓여 있고 잘라서 줄인다."""
+    t = Timeline(100)
+    assert len(t) == 1 and t[0].start == 0 and t[0].end == 100
+    assert t.output_duration() == 100
+    assert not t.dirty
+
+
+def test_split_makes_two_touching_clips() -> None:
+    t = Timeline(100)
+    assert t.split(40) == 1
+    assert [(c.start, c.end) for c in t] == [(0, 40), (40, 100)]
+    assert t.output_duration() == 100        # 자르기만으로는 길이가 줄지 않는다
+
+
+def test_split_at_edge_is_refused() -> None:
+    """0 길이 구간을 만들지 않는다."""
+    t = Timeline(100)
+    assert t.split(0) == -1
+    assert t.split(100) == -1
+    assert t.split(99.99) == -1
+    assert len(t) == 1
+
+
+def test_disabled_clip_leaves_the_result() -> None:
+    t = Timeline(100)
+    t.split(40)
+    t.toggle(0)
+    assert t.output_duration() == 60
+    assert [c.start for c in t.enabled_clips()] == [40]
+    assert len(t) == 2                       # 지운 것도 목록엔 남는다(되살리려고)
+    t.toggle(0)
+    assert t.output_duration() == 100
+
+
+def test_trim_moves_the_neighbour_too() -> None:
+    """빈틈을 만들지 않는다 — 경계를 끌면 이웃이 같이 준다."""
+    t = Timeline(100)
+    t.split(40)
+    t.trim(1, start=30)
+    assert [(c.start, c.end) for c in t] == [(0, 30), (30, 100)]
+    t.trim(0, end=50)
+    assert [(c.start, c.end) for c in t] == [(0, 50), (50, 100)]
+
+
+def test_trim_is_clamped_by_neighbours() -> None:
+    # 부동소수점 뺄셈이라 정확히 MIN_SPLIT_GAP 이 아니라 그 언저리다. 요지는
+    # "이웃이 0 길이로 뭉개지지 않는다" 이므로 그만큼의 여유를 두고 본다.
+    from bora.clip.model import MIN_SPLIT_GAP
+    floor = MIN_SPLIT_GAP * 0.9
+
+    t = Timeline(100)
+    t.split(40)
+    t.trim(1, start=-999)                    # 앞 구간을 0 아래로 밀 수 없다
+    assert t[0].start == 0 and t[1].start >= floor
+    assert t[0].duration >= floor
+    t2 = Timeline(100)
+    t2.split(40)
+    t2.trim(0, end=9999)                     # 뒤 구간을 없앨 수 없다
+    assert t2[1].end == 100 and t2[1].duration >= floor
+
+
+def test_move_reorders_without_changing_source_times() -> None:
+    t = Timeline(100)
+    t.split(40)
+    assert t.move(0, 1) == 1
+    assert [(c.start, c.end) for c in t] == [(40, 100), (0, 40)]
+
+
+def test_source_to_output_skips_cut_parts() -> None:
+    t = Timeline(100)
+    t.split(40)
+    t.toggle(0)                              # 0~40 을 들어낸다
+    assert t.source_to_output(40) == 0.0
+    assert t.source_to_output(70) == 30.0
+    assert t.source_to_output(20) is None    # 잘려 나간 자리
+
+
+def test_preview_jumps_over_cut_parts() -> None:
+    t = Timeline(100)
+    t.split(40)
+    t.split(70)
+    t.toggle(1)                              # 40~70 을 들어낸다
+    assert t.next_enabled_start(10) is None  # 살아 있는 구간 안 — 그냥 재생
+    assert t.next_enabled_start(50) == 70    # 잘린 자리 — 다음 시작으로 건너뛴다
+    assert t.next_enabled_start(95) is None  # 마지막 구간 안
+
+
+def test_undo_redo_covers_every_edit() -> None:
+    t = Timeline(100)
+    t.split(40); t.toggle(0); t.move(0, 1)
+    assert t.can_undo and not t.can_redo
+    for _ in range(3):
+        assert t.undo()
+    assert [(c.start, c.end) for c in t] == [(0, 100)]
+    assert not t.can_undo and t.can_redo
+    assert t.redo()
+    assert len(t) == 2
+
+
+def test_undo_restores_a_copy_not_a_reference() -> None:
+    """스냅숏이 얕으면 되돌린 뒤 편집이 과거까지 바꾼다."""
+    t = Timeline(100)
+    t.split(40)
+    t.trim(0, end=50)
+    t.undo()
+    assert t[0].end == 40
+
+
+def test_dirty_tells_whether_to_ask_on_close() -> None:
+    t = Timeline(100)
+    assert not t.dirty
+    t.split(40)
+    assert t.dirty
+
+
+def test_remove_lets_the_neighbour_absorb() -> None:
+    t = Timeline(100)
+    t.split(40)
+    t.remove(1)
+    assert [(c.start, c.end) for c in t] == [(0, 100)]
+    assert not t.remove(0)                   # 마지막 하나는 남긴다
