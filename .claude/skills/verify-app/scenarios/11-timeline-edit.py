@@ -12,6 +12,9 @@ T6 미리보기가 잘린 자리를 건너뛴다
 T7 내보내기가 남은 구간만 넘긴다
 T8 접혀 있을 때는 S 가 정지, 펴져 있을 때는 자르기
 T9 재생헤드가 프레임 클록을 타고 매끄럽게 따라간다 (접으면 멈춘다)
+T10 필름스트립 본체를 클릭하면 선택만 되고 재생은 끊기지 않는다
+T11 눈금 띠를 클릭하면 재생헤드가 그리로 간다
+T12 지운 구간을 지날 때 화면이 검게 덮인다
 """
 import shutil
 import subprocess
@@ -189,6 +192,54 @@ def main() -> int:
                 check("T9 재생헤드가 매끄럽게 움직인다", moved >= 6,
                       f"2초 동안 서로 다른 값 {moved}/8")
                 win.player.paused = True
+
+                # T10~T12 — 선택/재생헤드 분리와 블랙아웃
+                # 앞선 검사들이 이미 여기를 지워 뒀을 수 있다. toggle 은 되살려 버리므로
+                # (실제로 그래서 한 번 헛짚었다) 상태를 명시적으로 만든다.
+                tl.model.split(40)
+                tl.model.split(70)
+                index = tl.model.index_at(50)
+                tl.model.set_enabled(index, False)
+                tl.selected = index
+                tl._changed()
+                pump(0.2)
+                check("T12 준비 — 50초 구간이 꺼져 있다",
+                      not tl.model[tl.model.index_at(50)].enabled,
+                      str([(round(c.start), round(c.end), c.enabled) for c in tl.model]))
+
+                win.player.seek_absolute(50)
+                wait_until(lambda: abs((win.player.time_pos or 0) - 50) < 3, 6.0)
+                pump(0.4)
+                check("T12 지운 구간에서 화면이 검게 덮인다",
+                      win._blackout.get_visible(),
+                      f"위치 {win.player.time_pos:.1f}")
+                win.player.seek_absolute(85)
+                wait_until(lambda: (win.player.time_pos or 0) > 80, 6.0)
+                pump(0.4)
+                check("T12 살아 있는 구간에서는 덮개가 걷힌다",
+                      not win._blackout.get_visible(),
+                      f"위치 {win.player.time_pos:.1f}")
+
+                width = tl.get_width() or 400
+                win.player.paused = False
+                pump(0.5)
+                before = win.player.time_pos or 0.0
+                selected_before = tl.selected
+                tl._on_pressed(None, 1, width * 0.2, 40)      # 본체(필름스트립) 클릭
+                pump(0.7)
+                after = win.player.time_pos or 0.0
+                check("T10 본체 클릭은 선택만 — 재생이 끊기지 않는다",
+                      after > before and tl.selected != -1,
+                      f"{before:.1f} → {after:.1f}, 선택 {selected_before}→{tl.selected}")
+                win.player.paused = True
+                pump(0.3)
+
+                tl._on_pressed(None, 1, width * 0.5, 5)       # 눈금 띠 클릭
+                pump(0.5)
+                want = tl._time_of(width * 0.5)
+                check("T11 눈금 클릭은 재생헤드를 옮긴다",
+                      abs((win.player.time_pos or -99) - want) < 4.0,
+                      f"목표 {want:.1f} · 실제 {win.player.time_pos:.1f}")
 
                 # 닫을 때 편집 중이면 묻는다
                 win.toggle_edit()

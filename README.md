@@ -48,8 +48,8 @@ Ubuntu **22.04 / 24.04 / 26.04** 를 모두 지원해야 한다. 이 제약이 �
 ### deb 로 설치 (권장)
 
 ```bash
-wget https://github.com/icurfer/ic-bora-player/raw/main/dist/bora_0.21.0_all.deb
-sudo apt install ./bora_0.21.0_all.deb
+wget https://github.com/icurfer/ic-bora-player/raw/main/dist/bora_0.22.0_all.deb
+sudo apt install ./bora_0.22.0_all.deb
 bora <영상파일>
 ```
 
@@ -95,6 +95,9 @@ export ANTHROPIC_API_KEY=sk-ant-...   # AI 질의용. 앱은 키를 저장하지
 
 편집 타임라인을 편 동안: `S` 자르기 · `Delete` 지우기/되살리기 · `Ctrl+Z` 되돌리기 ·
 경계를 끌어 다듬기 · `Ctrl+휠` 확대
+
+타임라인에서 **눈금 띠**를 누르면 재생헤드가 옮겨 가고, **필름스트립 본체**를 누르면 구간이
+선택될 뿐 재생은 이어진다. 지운 구간을 지날 때는 화면이 검게 덮인다.
 
 메모 안에서: `Ctrl+T` 현재 시각 넣기 · `Ctrl+Enter` 이 줄을 AI 에게 묻기 · `Ctrl+S` 저장
 

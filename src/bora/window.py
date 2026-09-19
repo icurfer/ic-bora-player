@@ -93,11 +93,19 @@ class BoraWindow(Adw.ApplicationWindow):
         root.append(self._header_revealer)
 
         self._video = MpvGLArea(self.player)
+        # 지운 구간을 지날 때 덮는 검은 판. 편집기들이 그러듯 "여기는 빠진다"를
+        # 재생 중에 눈으로 보여 준다. CSS 없이 직접 칠한다(프로바이더를 늘리지 않으려고).
+        self._blackout = Gtk.DrawingArea(can_target=False, visible=False)
+        self._blackout.set_draw_func(self._draw_blackout)
+        self._video_stack = Gtk.Overlay()
+        self._video_stack.set_child(self._video)
+        self._video_stack.add_overlay(self._blackout)
+
         # 영상 | 메모. 메모를 접으면 영상이 전부 차지한다.
         self._paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL,
                                 vexpand=True, resize_start_child=True,
                                 shrink_start_child=False, shrink_end_child=False)
-        self._paned.set_start_child(self._video)
+        self._paned.set_start_child(self._video_stack)
         self._notes = NotePanel(self)
         self._paned.set_end_child(self._notes)
         self._notes.set_visible(False)          # 기본은 접어 둔다
@@ -116,7 +124,8 @@ class BoraWindow(Adw.ApplicationWindow):
         # (이 앱은 여전히 플레이어다 — 기획서 v0.5 §2).
         self._timeline = TimelineView(on_seek=self._on_timeline_seek,
                                       on_changed=self._on_timeline_changed,
-                                      on_scrub=self._on_timeline_scrub)
+                                      on_scrub=self._on_timeline_scrub,
+                                      on_position=self._on_timeline_position)
         self._edit_revealer = Gtk.Revealer(
             child=self._build_edit_area(),
             transition_type=Gtk.RevealerTransitionType.SLIDE_UP,
@@ -968,6 +977,7 @@ class BoraWindow(Adw.ApplicationWindow):
             self._edit_revealer.set_reveal_child(False)
             self._preview_btn.set_active(False)
             self._timeline.unload()
+            self._blackout.set_visible(False)
             return
         if self._current is None:
             self.toast("영상을 먼저 열어라")
@@ -1030,8 +1040,40 @@ class BoraWindow(Adw.ApplicationWindow):
         """경계를 끄는 동안 그 프레임을 보여 준다 — 이게 돼야 감이 잡힌다(T3)."""
         self.player.seek_absolute(seconds)
 
+    def _draw_blackout(self, _area, cr, width: int, height: int) -> None:
+        cr.set_source_rgb(0, 0, 0)
+        cr.rectangle(0, 0, width, height)
+        cr.fill()
+        cr.set_source_rgba(1, 1, 1, 0.55)
+        cr.select_font_face("sans")
+        cr.set_font_size(15)
+        label = "삭제된 구간"
+        extents = cr.text_extents(label)
+        cr.move_to((width - extents.width) / 2, (height + extents.height) / 2)
+        cr.show_text(label)
+
+    def _on_timeline_position(self, seconds: float) -> None:
+        """재생헤드가 지운 구간에 있으면 화면을 검게 덮는다.
+
+        미리보기는 **건너뛰는** 쪽이라(결과물 확인) 여기서는 손대지 않는다.
+        일반 재생에서는 지워진 자리를 그대로 지나가되 검게 보여 준다 — 무엇이 빠졌는지
+        재생하면서 확인할 수 있어야 한다.
+        """
+        model = self._timeline.model
+        if model is None:
+            return
+        index = model.index_at(seconds)
+        cut = index >= 0 and not model[index].enabled
+        want = cut and not self._preview
+        if want != self._blackout.get_visible():
+            self._blackout.set_visible(want)
+
     def _on_timeline_changed(self) -> None:
         self._sync_edit_bar()
+        # 지금 있는 자리가 방금 지워졌을 수도 있다 — 덮개를 바로 맞춘다.
+        position = self.player.time_pos
+        if position is not None:
+            self._on_timeline_position(position)
 
     def _sync_edit_bar(self) -> None:
         model = self._timeline.model

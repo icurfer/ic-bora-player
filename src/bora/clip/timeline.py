@@ -23,7 +23,8 @@ from .thumbs import HEIGHT as THUMB_HEIGHT, ThumbStrip  # noqa: E402
 
 log = get_logger("clip.timeline")
 
-STRIP_TOP = 18          # 눈금이 차지하는 높이
+STRIP_TOP = 20          # 눈금 띠의 높이. **여기를 누르면 재생헤드가 움직인다**
+                        # (필름스트립 본체를 누르면 구간 선택일 뿐 재생은 끊기지 않는다)
 STRIP_HEIGHT = THUMB_HEIGHT
 TOTAL_HEIGHT = STRIP_TOP + STRIP_HEIGHT + 6
 EDGE_GRAB = 7           # px — 이 안에서 잡으면 경계를 끄는 것으로 본다
@@ -40,11 +41,13 @@ class TimelineView(Gtk.DrawingArea):
     `on_seek`(재생헤드 이동), `on_changed`(편집됨), `on_scrub`(끄는 동안 그 프레임 보여주기).
     """
 
-    def __init__(self, on_seek=None, on_changed=None, on_scrub=None) -> None:
+    def __init__(self, on_seek=None, on_changed=None, on_scrub=None,
+                 on_position=None) -> None:
         super().__init__(content_height=TOTAL_HEIGHT, hexpand=True)
         self.on_seek = on_seek
         self.on_changed = on_changed
         self.on_scrub = on_scrub
+        self.on_position = on_position      # 프레임마다 — 지운 구간인지 바깥이 판단한다
 
         self.model: Timeline | None = None
         self.thumbs: ThumbStrip | None = None
@@ -136,6 +139,8 @@ class TimelineView(Gtk.DrawingArea):
             now = self._position_source()
             if now is not None:
                 self.set_position(now)
+                if self.on_position is not None:
+                    self.on_position(now)
         return GLib.SOURCE_CONTINUE
 
     def split_here(self) -> bool:
@@ -296,6 +301,10 @@ class TimelineView(Gtk.DrawingArea):
         cr.stroke()
 
     def _draw_ruler(self, cr, width: int) -> None:
+        # 눈금 띠에 배경을 깔아 "여기를 누르면 재생헤드가 움직인다"를 드러낸다.
+        cr.set_source_rgb(0.18, 0.18, 0.21)
+        cr.rectangle(0, 0, width, STRIP_TOP)
+        cr.fill()
         span = self._span()
         # 눈금 간격을 보기 좋은 값으로 고른다
         for step in (1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600):
@@ -370,8 +379,12 @@ class TimelineView(Gtk.DrawingArea):
         if cursor is not None:
             self.set_cursor(cursor)
 
-    def _on_pressed(self, gesture, n_press: int, x: float, _y: float) -> None:
+    def _on_pressed(self, gesture, n_press: int, x: float, y: float) -> None:
         if self.model is None:
+            return
+        if y < STRIP_TOP:
+            # 눈금 띠 — 재생헤드를 옮긴다. 선택은 건드리지 않는다.
+            self._seek_to(self._time_of(x))
             return
         index, where = self._hit(x)
         if where == "body":
@@ -383,23 +396,29 @@ class TimelineView(Gtk.DrawingArea):
             return
         self.queue_draw()
 
-    def _on_released(self, _gesture, _n: int, x: float, _y: float) -> None:
-        if self.model is None or self._drag_kind:
-            return
-        # 끌지 않고 눌렀다 뗐으면 재생헤드 이동
-        self._seek_to(self._time_of(x))
+    def _on_released(self, _gesture, _n: int, _x: float, _y: float) -> None:
+        # 본체를 눌렀다 떼는 것은 **선택**일 뿐이다.
+        # 예전에는 여기서 재생헤드를 옮겼는데, 구간을 고르려고 누를 때마다 재생이
+        # 그리로 튀었다. 재생헤드는 눈금 띠에서만 옮긴다.
+        return
 
     def _on_drag_begin(self, gesture, x: float, _y: float) -> None:
         if self.model is None:
             return
+        _ok, _sx, start_y = (True, x, 0.0)
+        gesture_ok, _px, py = gesture.get_start_point()
+        if gesture_ok:
+            start_y = py
         index, where = self._hit(x)
         self._drag_index = index
         self._drag_from = self._time_of(x)
-        if where in ("start", "end"):
+        if start_y < STRIP_TOP:
+            self._drag_kind = "seek"    # 눈금을 끌면 스크럽
+        elif where in ("start", "end"):
             self._drag_kind = f"trim-{where}"
             self.model._push()          # 드래그 한 번을 되돌리기 하나로 친다
         elif where == "body":
-            self._drag_kind = "seek"    # 본체를 끌면 스크럽(재생헤드 따라가기)
+            self._drag_kind = ""        # 본체를 끄는 것은 선택일 뿐 — 재생을 끊지 않는다
             self.selected = index
         else:
             self._drag_kind = ""
