@@ -13,6 +13,8 @@ L2 바꾼 등급이 설정에 저장된다
 L3 파일로도 남길 수 있다
 M1 하단 메뉴 버튼이 실제로 열린다 (창보다 긴 메뉴여도)
 M2 우클릭 메뉴가 화면 네 귀퉁이 어디서든 잘리지 않는다
+E1 파일 없이 띄운 빈 창은 재생 버튼이 ▶ 이고 컨트롤이 꺼져 있다
+E2 파일을 열면 컨트롤이 켜지고 버튼이 ⏸ 로 바뀐다
 """
 import shutil
 import subprocess
@@ -146,6 +148,33 @@ def main() -> int:
 
                 win._on_log_level(_Checked(True), "warning")
 
+                # E1 — 빈 창. 파일이 없는데 ⏸ 가 떠 있으면 "이미 재생 중"으로 보인다.
+                # (mpv 의 pause 는 파일이 없어도 False 다.)
+                empty = win._current is None
+                if empty:
+                    pump(0.6)       # _tick 이 몇 번 돌게 둔다 — 안내를 덮어쓰지 않아야 한다
+                    check("E1 빈 창은 ▶ 재생 아이콘",
+                          win._play_btn.get_icon_name() == "media-playback-start-symbolic",
+                          win._play_btn.get_icon_name())
+                    off = [w.get_sensitive() for w in
+                           (win._play_btn, win._stop_btn, win._seek,
+                            win._loop_btn, win._pin_btn)]
+                    check("E1 빈 창은 재생 컨트롤이 꺼져 있다", not any(off), str(off))
+                    check("E1 무엇을 할지 안내한다", "파일" in win._status.get_label(),
+                          repr(win._status.get_label()))
+
+                # E2 — 파일을 열면 켜진다
+                win.open_path(video)
+                pump(1.5)
+                on = [w.get_sensitive() for w in
+                      (win._play_btn, win._stop_btn, win._seek,
+                       win._loop_btn, win._pin_btn)]
+                check("E2 파일을 열면 컨트롤이 켜진다", all(on), str(on))
+                check("E2 재생 중이면 ⏸ 로 바뀐다",
+                      win._play_btn.get_icon_name() == "media-playback-pause-symbolic"
+                      or win.player.paused,
+                      f"{win._play_btn.get_icon_name()} · paused={win.player.paused}")
+
                 # M1 — 하단 메뉴 버튼. 메뉴가 창보다 길면 팝오버가 아예 뜨지 않는다
                 # (항목이 늘어 767px 이 되자 눌러도 아무 일도 안 일어났다).
                 win._menu_button.popup()
@@ -182,7 +211,8 @@ def main() -> int:
             def __init__(self, value): self._v = value
             def get_active(self): return self._v
 
-        Probe(non_unique=True).run([sys.argv[0], str(video)])
+        # 파일 인자 없이 띄운다 — 빈 창 상태(E1)를 보려면 그래야 한다.
+        Probe(non_unique=True).run([sys.argv[0]])
     finally:
         shutil.rmtree(folder, ignore_errors=True)
 

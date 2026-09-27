@@ -136,6 +136,8 @@ class BoraWindow(Adw.ApplicationWindow):
         self._preview = False           # 미리보기 중이면 잘린 자리를 건너뛴다
 
         self._apply_settings()
+        self._sync_controls_enabled()
+        self._sync_play_button()
 
         # 재생 위치는 폴링으로 갱신한다. mpv 의 time-pos 변화를 구독하면 초당 수십 번
         # 메인 루프로 넘어와 UI 가 불필요하게 바빠진다.
@@ -1621,6 +1623,8 @@ class BoraWindow(Adw.ApplicationWindow):
             self._notes.load_for(path, path.stem)
         self._title.set_title(path.name)
         self._title.set_subtitle(str(path.parent))
+        self._sync_controls_enabled()
+        self._sync_play_button()
         # 트랙 주입 직후에는 track_list 가 아직 안 채워져 있을 수 있다. 한 박자 뒤에 그린다.
         GLib.timeout_add(300, self._refresh_subtitle_menu_once)
         if self._plan is not None:
@@ -1668,8 +1672,27 @@ class BoraWindow(Adw.ApplicationWindow):
 
     # ── 갱신 ─────────────────────────────────────────────────────────────
     def _sync_play_button(self) -> None:
-        icon = "media-playback-start-symbolic" if self.player.paused else "media-playback-pause-symbolic"
-        self._play_btn.set_icon_name(icon)
+        # 파일이 없으면 mpv 의 pause 는 False 지만 **재생 중인 것이 아니다.**
+        # 그대로 두면 ⏸ 아이콘이 떠 "이미 재생 중"처럼 보인다(빈 창인데도).
+        playing = self._current is not None and not self.player.paused
+        self._play_btn.set_icon_name(
+            "media-playback-pause-symbolic" if playing
+            else "media-playback-start-symbolic")
+
+    def _sync_controls_enabled(self) -> None:
+        """영상이 있어야 뜻이 있는 컨트롤을 켜고 끈다.
+
+        빈 창에서 재생·정지·탐색이 눌리게 두면 "눌렀는데 아무 일도 없다"가 된다.
+        회색으로 꺼 두면 무엇을 먼저 해야 하는지(파일 열기)가 보인다.
+        """
+        ready = self._current is not None
+        for widget in (self._play_btn, self._stop_btn, self._seek,
+                       self._loop_btn, self._pin_btn):
+            widget.set_sensitive(ready)
+        if not ready:
+            self._pos_label.set_label("--:--")
+            self._dur_label.set_label("--:--")
+            self._status.set_label("파일을 열어라 — O 또는 창에 끌어다 놓기")
 
     def _on_seek(self, _scale, _scroll, value: float) -> bool:
         self.player.seek_absolute(value)
@@ -1692,6 +1715,10 @@ class BoraWindow(Adw.ApplicationWindow):
             self._status.set_label(f"구간 반복 {_fmt_time(a)} ~ {_fmt_time(b)}")
         elif a is not None:
             self._status.set_label(f"구간 시작 {_fmt_time(a)} — 끝점 대기")
+        elif self._current is None:
+            # 빈 창에서는 무엇을 먼저 해야 하는지 알려 준다. 250ms 마다 도는 이 함수가
+            # 안내를 덮어쓰고 있었다.
+            self._status.set_label("파일을 열어라 — O 또는 창에 끌어다 놓기")
         else:
             hw = self.player.hwdec_current
             self._status.set_label("" if hw == "no" else f"하드웨어 디코딩: {hw}")
