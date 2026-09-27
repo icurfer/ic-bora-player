@@ -32,6 +32,8 @@ MIN_VIEW = 2.0          # 초 — 이보다 더 확대하지 않는다
 ZOOM_STEP = 1.25
 # 열자마자 이만큼은 뽑아 둔다. 폭을 아직 모를 때도 그림이 채워지기 시작해야 한다.
 PREFETCH = 40
+SELECT_BORDER = 3       # px — 선택 테두리 두께
+SELECT_HANDLE = 4       # px — 선택 구간 위에 얹는 손잡이 띠
 
 
 class TimelineView(Gtk.DrawingArea):
@@ -289,16 +291,29 @@ class TimelineView(Gtk.DrawingArea):
                            top + (bottom - top + extents.height) / 2)
                 cr.show_text("삭제됨")
 
-        # 테두리 — 선택된 것만 밝게
+        # 선택 표시 — 테두리만으로는 **필름스트립 위에서 묻힌다.**
+        # 2.5px 선은 실제로 1~2px 만 진하게 찍혀 회색 테두리와 구분되지 않았다.
+        # 채움 + 두꺼운 테두리 + 위쪽 손잡이 세 가지를 겹쳐 확실히 드러낸다.
         chosen = index == self.selected
+        span = max(1.0, x1 - x0)
         if chosen:
-            cr.set_source_rgb(0.45, 0.75, 1.0)
-            cr.set_line_width(2.5)
+            cr.set_source_rgba(0.35, 0.65, 1.0, 0.25)
+            cr.rectangle(x0, top, span, bottom - top)
+            cr.fill()
+            cr.set_source_rgb(0.42, 0.76, 1.0)
+            cr.rectangle(x0, top, span, SELECT_HANDLE)          # 위쪽 손잡이
+            cr.fill()
+            cr.set_line_width(SELECT_BORDER)
+            half = SELECT_BORDER / 2
+            cr.rectangle(x0 + half, top + half,
+                         max(1.0, span - SELECT_BORDER),
+                         bottom - top - SELECT_BORDER)
+            cr.stroke()
         else:
             cr.set_source_rgba(1, 1, 1, 0.35)
             cr.set_line_width(1)
-        cr.rectangle(x0 + 1, top + 1, max(1.0, x1 - x0 - 2), bottom - top - 2)
-        cr.stroke()
+            cr.rectangle(x0 + 1, top + 1, max(1.0, span - 2), bottom - top - 2)
+            cr.stroke()
 
     def _draw_ruler(self, cr, width: int) -> None:
         # 눈금 띠에 배경을 깔아 "여기를 누르면 재생헤드가 움직인다"를 드러낸다.
