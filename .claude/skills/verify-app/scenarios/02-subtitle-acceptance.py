@@ -82,6 +82,7 @@ def child_main(video: str) -> int:
     from gi.repository import GLib
 
     from bora.app import BoraApplication
+    from bora.state import State
 
     seen: list[str] = []
     out: dict = {}
@@ -90,6 +91,9 @@ def child_main(video: str) -> int:
         def do_activate(self):
             super().do_activate()
             self.win = self.props.active_window
+            # 검증이 사용자 설정을 건드리면 최근 파일에 임시 영상이 쌓인다.
+            # 실제로 12개가 쌓여 사용자 목록을 더럽혔다 — 반드시 격리한다.
+            self.win.state = State(Path(tempfile.mkdtemp(prefix='bora-cfg-')))
             self.n = 0
             GLib.timeout_add(INTERVAL_MS, self._sample)
 

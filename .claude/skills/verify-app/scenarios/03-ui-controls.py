@@ -35,6 +35,7 @@ from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 
 import bora.player as player_mod  # noqa: E402
 from bora.app import BoraApplication  # noqa: E402
+from bora.state import State  # noqa: E402
 
 # 렌더 횟수를 센다 — 창 크기가 바뀐 뒤 다시 그려지는지 확인하려고.
 _orig_render = player_mod.Player.render
@@ -94,6 +95,9 @@ def main() -> int:
             def do_activate(self):
                 super().do_activate()
                 self.win = self.props.active_window
+                # 검증이 사용자 설정을 건드리면 최근 파일에 임시 영상이 쌓인다.
+                # 실제로 12개가 쌓여 사용자 목록을 더럽혔다 — 반드시 격리한다.
+                self.win.state = State(Path(tempfile.mkdtemp(prefix='bora-cfg-')))
                 GLib.timeout_add_seconds(3, self._run, self.win)
 
             def _run(self, win):

@@ -13,7 +13,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, GLib, Gtk, Pango  # noqa: E402
 
 from .glarea import MpvGLArea  # noqa: E402
 from . import log as logmod  # noqa: E402
@@ -332,6 +332,8 @@ class BoraWindow(Adw.ApplicationWindow):
     def _build_context_menu(self) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2,
                       margin_top=6, margin_bottom=6, margin_start=6, margin_end=6)
+        if self._current is None:
+            return self._build_empty_context_menu(box)
         play_label = "재생" if self.player.paused else "일시정지"
         items = [
             (play_label, "Space", self.toggle_pause),
@@ -368,6 +370,39 @@ class BoraWindow(Adw.ApplicationWindow):
             button = Gtk.Button(child=row, has_frame=False)
             button.connect("clicked", self._on_menu_item, handler)
             box.append(button)
+        return box
+
+    def _build_empty_context_menu(self, box: Gtk.Box) -> Gtk.Widget:
+        """영상이 없을 때의 우클릭 메뉴 — **할 수 있는 것만** 보여 준다.
+
+        빈 창에서도 재생·정지·자막 싱크를 늘어놓았더니 정작 "파일 열기"가 열다섯 번째라
+        스크롤해야 보였다. 지금 할 수 있는 일은 파일을 여는 것뿐이다.
+        """
+        items: list = [("파일 열기…", "O", self.choose_file)]
+        recent = self.state.recent_items()
+        if recent:
+            items.append((None, None, None))
+            for item in recent[:6]:
+                label = item.title or Path(item.path).name
+                items.append((label, "", lambda p=item.path: self.open_path(Path(p))))
+        items.append((None, None, None))
+        items.append(("메뉴 열기", "", self._menu_button.popup))
+
+        for label, accel, handler in items:
+            if label is None:
+                box.append(Gtk.Separator(margin_top=3, margin_bottom=3))
+                continue
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=18)
+            row.append(Gtk.Label(label=label, xalign=0, hexpand=True,
+                                 ellipsize=Pango.EllipsizeMode.MIDDLE, max_width_chars=34))
+            row.append(Gtk.Label(label=accel, css_classes=["dim-label"], xalign=1))
+            button = Gtk.Button(child=row, has_frame=False)
+            button.connect("clicked", self._on_menu_item, handler)
+            box.append(button)
+        if not recent:
+            box.append(Gtk.Label(label="영상을 창에 끌어다 놓아도 열린다", xalign=0,
+                                 margin_top=6, margin_start=6,
+                                 css_classes=["dim-label"]))
         return box
 
     def _on_menu_item(self, _button, handler) -> None:

@@ -26,6 +26,7 @@ gi.require_version("Adw", "1")
 from gi.repository import GLib  # noqa: E402
 
 from bora.app import BoraApplication  # noqa: E402
+from bora.state import State
 from bora.subtitle.model import ms_to_srt  # noqa: E402
 
 results: list[tuple[str, bool, str]] = []
@@ -85,6 +86,9 @@ def run_srt_case(folder: Path) -> None:
         def do_activate(self):
             super().do_activate()
             self.win = self.props.active_window
+            # 검증이 사용자 설정을 건드리면 최근 파일에 임시 영상이 쌓인다.
+            # 실제로 12개가 쌓여 사용자 목록을 더럽혔다 — 반드시 격리한다.
+            self.win.state = State(Path(tempfile.mkdtemp(prefix='bora-cfg-')))
             GLib.timeout_add_seconds(3, self._run, self.win)
 
         def _run(self, win):

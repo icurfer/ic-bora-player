@@ -28,6 +28,7 @@ gi.require_version("Adw", "1")
 from gi.repository import GLib  # noqa: E402
 
 from bora.app import BoraApplication  # noqa: E402
+from bora.state import State  # noqa: E402
 from bora.clip.model import Clip  # noqa: E402
 from bora.clip.probe import StreamInfo, can_stream_copy, probe  # noqa: E402
 from bora.clip.runner import ExportJob, ExportRunner  # noqa: E402
@@ -89,6 +90,9 @@ def main() -> int:
             def do_activate(self):
                 super().do_activate()
                 self.win = self.props.active_window
+                # 검증이 사용자 설정을 건드리면 최근 파일에 임시 영상이 쌓인다.
+                # 실제로 12개가 쌓여 사용자 목록을 더럽혔다 — 반드시 격리한다.
+                self.win.state = State(Path(tempfile.mkdtemp(prefix='bora-cfg-')))
                 GLib.timeout_add_seconds(3, self._run, self.win)
 
             def _run(self, win):
