@@ -47,6 +47,7 @@ class Player:
         ⚠ vo='libmpv' 는 렌더 컨텍스트가 붙어야 디코딩이 진행된다. 창 없이 로직만 시험할 때는
         vo='null' 을 준다(대신 스크린샷처럼 렌더 결과가 필요한 기능은 동작하지 않는다).
         """
+        self._closed = False
         _force_c_numeric()
         debug = debug_enabled() if debug is None else debug
         options = dict(
@@ -369,7 +370,17 @@ class Player:
         self._mpv.observe_property(name, handler)
 
     # ── 정리 ─────────────────────────────────────────────────────────────
+    @property
+    def alive(self) -> bool:
+        """엔진이 아직 살아 있나.
+
+        종료 뒤에도 타이머가 한 박자 더 돌아 죽은 코어를 건드리는 일이 있다
+        (`mpv.ShutdownError: libmpv core has been shutdown`). 건드리기 전에 이걸 본다.
+        """
+        return not self._closed
+
     def close(self) -> None:
+        self._closed = True
         if self._ctx is not None:
             try:
                 self._ctx.free()

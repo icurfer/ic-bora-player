@@ -141,9 +141,9 @@ class BoraWindow(Adw.ApplicationWindow):
 
         # 재생 위치는 폴링으로 갱신한다. mpv 의 time-pos 변화를 구독하면 초당 수십 번
         # 메인 루프로 넘어와 UI 가 불필요하게 바빠진다.
-        GLib.timeout_add(250, self._tick)
+        self._tick_id = GLib.timeout_add(250, self._tick)
         # 이어보기 기록. 매초 쓸 이유가 없다(기획서 v0.2 §8-4 실측).
-        GLib.timeout_add_seconds(30, self._remember_position)
+        self._remember_id = GLib.timeout_add_seconds(30, self._remember_position)
 
         # 창 자체에 붙인다 — 헤더바·컨트롤 위에 떨궈도 받아야 한다.
         self._setup_drop_target(self)
@@ -1619,6 +1619,8 @@ class BoraWindow(Adw.ApplicationWindow):
 
     def _remember_position(self) -> bool:
         """지금 보고 있는 위치를 기록한다. 30초마다, 그리고 파일 전환·종료 때."""
+        if not self.player.alive:
+            return False
         if self._current is not None:
             pos, dur = self.player.time_pos, self.player.duration
             if pos is not None and dur:
@@ -1734,6 +1736,8 @@ class BoraWindow(Adw.ApplicationWindow):
         return False
 
     def _tick(self) -> bool:
+        if not self.player.alive:
+            return False            # 엔진이 닫혔다 — 타이머도 여기서 끝낸다
         duration = self.player.duration
         pos = self.player.time_pos
         if duration:
@@ -1760,6 +1764,14 @@ class BoraWindow(Adw.ApplicationWindow):
         return True
 
     def _on_close(self, *_args) -> bool:
+        # ⚠ 타이머를 **먼저** 뗀다. 남겨 두면 player.close() 뒤에 한 박자 더 돌아
+        #   죽은 mpv 코어를 건드리고 ShutdownError 로 크래시 리포터까지 뜬다.
+        for name in ("_tick_id", "_remember_id"):
+            source = getattr(self, name, 0)
+            if source:
+                GLib.source_remove(source)
+                setattr(self, name, 0)
+        self._timeline.unfollow()       # 프레임 콜백도 player 를 읽는다
         if self._stt is not None:
             self._stt.cancel()
         self._notes.save()

@@ -137,6 +137,8 @@ class TimelineView(Gtk.DrawingArea):
         self._position_source = None
 
     def _on_frame(self, _widget, _clock) -> bool:
+        if self._position_source is None:
+            return GLib.SOURCE_REMOVE
         if self._position_source is not None:
             now = self._position_source()
             if now is not None:

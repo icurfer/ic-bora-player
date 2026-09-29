@@ -15,6 +15,7 @@ M1 하단 메뉴 버튼이 실제로 열린다 (창보다 긴 메뉴여도)
 M2 우클릭 메뉴가 화면 네 귀퉁이 어디서든 잘리지 않는다
 E1 파일 없이 띄운 빈 창은 재생 버튼이 ▶ 이고 컨트롤이 꺼져 있다
 E2 파일을 열면 컨트롤이 켜지고 버튼이 ⏸ 로 바뀐다
+X1 종료할 때 타이머가 죽은 mpv 코어를 건드리지 않는다
 """
 import shutil
 import subprocess
@@ -205,6 +206,26 @@ def main() -> int:
                     pump(0.2)
                 check("M2 우클릭 메뉴가 네 귀퉁이에서 화면 안에 들어온다",
                       not bad, ", ".join(bad) if bad else f"영상 {vw}x{vh}")
+
+                # X1 — 종료 경로. 반드시 **맨 마지막**이다(엔진을 닫는다).
+                # 예전에는 player.close() 뒤에도 250ms 폴링과 타임라인 프레임 콜백이
+                # 한 박자 더 돌아 `mpv.ShutdownError` 를 냈고 크래시 리포터까지 떴다.
+                win.toggle_edit()               # 타임라인도 열어 둔 채로 닫아 본다
+                pump(0.6)
+                caught: list = []
+                context = GLib.MainContext.default()
+                win._on_close()
+                deadline = time.monotonic() + 2.5
+                while time.monotonic() < deadline:
+                    while context.pending():
+                        try:
+                            context.iteration(False)
+                        except Exception as exc:            # noqa: BLE001
+                            caught.append(f"{type(exc).__name__}: {exc}")
+                    time.sleep(0.02)
+                check("X1 종료 뒤 타이머가 죽은 엔진을 건드리지 않는다",
+                      not caught and not win.player.alive,
+                      "; ".join(caught[:2]) if caught else "예외 없음")
 
         class _Checked:
             """CheckButton 흉내 — 토글 핸들러는 get_active() 만 본다."""
