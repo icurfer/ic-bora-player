@@ -12,7 +12,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import GLib, Gtk  # noqa: E402
 
 from .player import Player  # noqa: E402
-from .util.gl import current_fbo  # noqa: E402
+from .platform.gl import current_fbo  # noqa: E402
 
 
 class MpvGLArea(Gtk.GLArea):

@@ -18,6 +18,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from .log import get as get_logger
+from .platform import paths as platform_paths
 
 log = get_logger("state")
 
@@ -30,8 +31,8 @@ MIN_RESUME_SECONDS = 30.0
 
 
 def config_dir() -> Path:
-    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
-    return Path(base) / "bora"
+    """설정 폴더. 플랫폼 차이는 `platform.paths` 가 가린다."""
+    return platform_paths.config_dir()
 
 
 def _key(path: Path) -> str:

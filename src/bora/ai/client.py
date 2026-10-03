@@ -10,6 +10,7 @@ import threading
 from pathlib import Path
 
 from ..log import get as get_logger
+from ..platform import paths as platform_paths
 from .context import Question, build, to_request
 
 log = get_logger("ai.client")
@@ -25,11 +26,11 @@ def repo_root() -> Path:
     for parent in here.parents:
         if (parent / "pyproject.toml").is_file():
             return parent
-    return Path.home() / ".local" / "share" / "bora"
+    return platform_paths.data_dir()
 
 
 def venv_python() -> Path:
-    return repo_root() / ".venv" / "bin" / "python"
+    return platform_paths.venv_python(repo_root() / ".venv")
 
 
 def sdk_installed() -> bool:

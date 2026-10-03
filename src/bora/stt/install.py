@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 from ..log import get as get_logger
+from ..platform import paths as platform_paths
 
 log = get_logger("stt.install")
 
@@ -24,7 +25,7 @@ def repo_root() -> Path:
     for parent in here.parents:
         if (parent / "pyproject.toml").is_file():
             return parent
-    return Path.home() / ".local" / "share" / "bora"
+    return platform_paths.data_dir()
 
 
 def venv_dir() -> Path:
@@ -32,7 +33,7 @@ def venv_dir() -> Path:
 
 
 def venv_python() -> Path:
-    return venv_dir() / "bin" / "python"
+    return platform_paths.venv_python(venv_dir())
 
 
 def is_installed() -> bool:
@@ -68,8 +69,8 @@ def install(model: str = "", on_line=None) -> bool:
     target = venv_dir()
     steps = [
         [sys.executable, "-m", "venv", str(target)],
-        [str(target / "bin" / "pip"), "install", "--upgrade", "pip"],
-        [str(target / "bin" / "pip"), "install", "faster-whisper"],
+        [str(platform_paths.venv_pip(target)), "install", "--upgrade", "pip"],
+        [str(platform_paths.venv_pip(target)), "install", "faster-whisper"],
     ]
     for step in steps:
         log.info("설치: %s", " ".join(step[:3]))

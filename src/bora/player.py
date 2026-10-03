@@ -19,7 +19,7 @@ import mpv
 
 from .log import debug_enabled, get as get_logger, mpv_log_handler
 from .subtitle.sami import Track
-from .util.gl import get_proc_address
+from .platform.gl import get_proc_address
 
 log = get_logger("player")
 

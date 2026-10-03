@@ -190,8 +190,10 @@ def main() -> int:
                 check("전체화면 상태 진입", win.is_fullscreen())
                 icon_fs = win._fs_button.get_icon_name()
                 check("전체화면 진입 직후엔 UI 가 보인다", win.chrome_visible)
-                check("크기 변경 뒤 다시 그린다(검은 화면 방지)",
-                      state["renders"] > renders_before,
+                # 전체화면 전환도 렌더도 비동기다. 상태만 기다리고 바로 세면
+                # 아직 프레임이 안 온 순간을 잡아 간헐적으로 실패한다(실제로 그랬다).
+                drew = wait_until(lambda: state["renders"] > renders_before, 3.0)
+                check("크기 변경 뒤 다시 그린다(검은 화면 방지)", drew,
                       f"렌더 {renders_before} -> {state['renders']}")
                 win._hide_ui()          # 타이머가 할 일을 당겨서 실행
                 check("전체화면에서 헤더바·컨트롤이 감춰진다", not win.chrome_visible,
