@@ -12,7 +12,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import GLib, Gtk  # noqa: E402
 
 from .player import Player  # noqa: E402
-from .platform.gl import current_fbo  # noqa: E402
+from .platform import gl as platform_gl  # noqa: E402
 
 
 class MpvGLArea(Gtk.GLArea):
@@ -41,7 +41,7 @@ class MpvGLArea(Gtk.GLArea):
         if not self._ready:
             return True
         scale = area.get_scale_factor()
-        self._player.render(area.get_width() * scale, area.get_height() * scale, current_fbo())
+        self._player.render(area.get_width() * scale, area.get_height() * scale, platform_gl.current_fbo())
         return True
 
     def _on_resize(self, _area: Gtk.GLArea, _w: int, _h: int) -> None:

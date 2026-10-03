@@ -143,3 +143,29 @@ W7 이 가장 중요하다. 윈도우를 얻겠다고 리눅스를 깨뜨리면 
 7. `docs/done/`
 
 **2번까지는 윈도우 없이도 할 수 있다.** 1번 결과를 기다리는 동안 리눅스에서 미리 해 둔다.
+
+## §8 폴더 구조 (2026-10-03 적용)
+
+플랫폼별 폴더로 나눴다. macOS·Android 는 **자리와 설명만** 있고 구현은 없다.
+
+```
+src/bora/platform/
+  base.py        각 폴더가 지켜야 할 이름과 뜻 + 공통 기본 구현
+  __init__.py    런타임에 하나를 고른다 (IS_LINUX / IS_WINDOWS / IS_MAC / IS_ANDROID)
+  linux/         ✅ 실기 검증 (Ubuntu 26.04)       gl=EGL,  integration=xdg
+  windows/       🚧 코드는 있으나 미검증            gl=WGL+폴백, integration=없음
+  macos/         📋 뼈대만, 조사 안 함              gl=미구현(OpenGL deprecated)
+  android/       📋 자리만 — 사실상 새 프로젝트      gl=의미 없음(GTK 미지원)
+```
+
+각 폴더는 `gl`·`paths`·`integration` 세 모듈을 같은 이름으로 제공한다.
+`tests/test_platform.py` 가 **네 플랫폼 전부**에 대해 이름이 빠지지 않았는지,
+지금 플랫폼이 아니어도 import 가 되는지 검사한다(25건).
+
+### 안드로이드에 대한 정직한 평가
+
+GTK 는 안드로이드를 지원하지 않는다. UI 를 통째로 새로 짜야 하고(터치·세로 화면),
+파이썬도 끼워 넣어야 하며, 파일 접근이 경로가 아니라 SAF URI 다.
+**가져갈 수 있는 것은 로직층 약 2,500줄**(자막 725줄이 핵심)이고, 현실적인 길은
+Kotlin 앱 + libmpv 에 자막 로직을 포팅하거나 Chaquopy 로 끼우는 것이다.
+`platform/android/__init__.py` 에 같은 내용을 적어 뒀다.

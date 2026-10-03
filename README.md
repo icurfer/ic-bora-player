@@ -31,13 +31,21 @@
 
 - **재생 엔진을 만들지 않는다.** 코덱·하드웨어 가속·싱크는 전부 libmpv(ffmpeg)에 맡긴다.
 - **자막 사이트 크롤링·자동 다운로드를 v0.1 에 넣지 않는다.** (보류 목록)
-- **Windows·macOS 를 지원하지 않는다.** 대상은 Ubuntu 22.04 ~ 26.04 (및 호환 배포판).
+
 - 코덱 팩·DRM·스트리밍 서비스 로그인을 다루지 않는다.
 
 ## 지원 범위
 
-Ubuntu **22.04 / 24.04 / 26.04** 를 모두 지원해야 한다. 이 제약이 기술 스택과 배포 방식을 결정한다
-(기획서 §4).
+| 플랫폼 | 상태 |
+|---|---|
+| **Ubuntu 26.04** | ✅ 동작 · deb 로 설치 |
+| Ubuntu 22.04 / 24.04 | ⏸ 미검증 — libadwaita 1.1 범위로 짰지만 실기로 돌려 보지 않았다 |
+| **Windows 10 / 11** | 🚧 기획 중([v0.6](docs/spec/plan-v0.6.0.md)) — 플랫폼 분기는 넣었고, GLArea+libmpv 스파이크가 남았다 |
+| macOS | 📋 자리만 — 조사하지 않았다 |
+| Android | 📋 자리만 — GTK 가 안 돌아 사실상 새 프로젝트다 |
+
+**✅ 가 아닌 것은 "될 것 같다"가 아니라 "확인하지 않았다"는 뜻이다.**
+플랫폼 분기는 전부 [`src/bora/platform/`](src/bora/platform/) 안에 있다.
 
 ## 문서
 
@@ -48,8 +56,8 @@ Ubuntu **22.04 / 24.04 / 26.04** 를 모두 지원해야 한다. 이 제약이 �
 ### deb 로 설치 (권장)
 
 ```bash
-wget https://github.com/icurfer/ic-bora-player/raw/main/dist/bora_0.24.2_all.deb
-sudo apt install ./bora_0.24.2_all.deb
+wget https://github.com/icurfer/ic-bora-player/raw/main/dist/bora_0.26.0_all.deb
+sudo apt install ./bora_0.26.0_all.deb
 bora <영상파일>
 ```
 

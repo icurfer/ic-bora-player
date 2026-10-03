@@ -1,4 +1,6 @@
-"""기본 영상 플레이어 설정.
+"""리눅스 데스크톱 연동 — `.desktop` 과 xdg 기본 프로그램.
+
+(기존 `bora/desktop.py` 를 그대로 옮겼다. 플랫폼 폴더로 나누면서 자리만 바뀌었다.)
 
 `.desktop` 을 등록하면 데스크톱이 **알아서 기본 프로그램을 가져가는 경우가 있다**
 (2026-09-14 실측: `xdg-mime default` 를 부르지 않았는데 Bora 가 기본이 됐다).
@@ -14,7 +16,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gio  # noqa: E402
 
-from .log import get as get_logger
+from ...log import get as get_logger
 
 log = get_logger("desktop")
 
@@ -102,3 +104,14 @@ def set_default(enable: bool, remembered: dict[str, str] | None = None) -> tuple
         note += f" ({len(failed)}종 실패)"
     log.info("%s", note)
     return True, note
+
+
+def can_set_default() -> bool:
+    """리눅스는 지원한다 — `.desktop` 과 xdg 가 있다."""
+    return app_info() is not None
+
+
+def unsupported_reason() -> str:
+    if app_info() is None:
+        return "앱이 설치되어 있지 않다 (.desktop 을 찾지 못했다)"
+    return ""

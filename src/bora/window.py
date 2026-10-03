@@ -19,7 +19,7 @@ from .glarea import MpvGLArea  # noqa: E402
 from . import log as logmod  # noqa: E402
 from .log import get as get_logger  # noqa: E402
 from .player import Player  # noqa: E402
-from . import desktop as desktop_setup  # noqa: E402
+from .platform import integration as desktop_setup  # noqa: E402
 from .clip import ClipList, ClipWindow  # noqa: E402
 from .clip.timeline import TimelineView  # noqa: E402
 from .clip.model import DEFAULT_SPAN, Clip  # noqa: E402

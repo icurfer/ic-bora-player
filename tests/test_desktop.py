@@ -12,7 +12,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from bora import desktop  # noqa: E402
+# 리눅스 구현은 platform/linux/ 로 옮겼다 (기획 v0.6 §3-1).
+from bora.platform.linux import integration as desktop  # noqa: E402
 
 
 class FakeApp:

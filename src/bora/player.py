@@ -19,7 +19,7 @@ import mpv
 
 from .log import debug_enabled, get as get_logger, mpv_log_handler
 from .subtitle.sami import Track
-from .platform.gl import get_proc_address
+from .platform import gl as platform_gl
 
 log = get_logger("player")
 
@@ -78,7 +78,7 @@ class Player:
         self._ctx = mpv.MpvRenderContext(
             self._mpv,
             "opengl",
-            opengl_init_params={"get_proc_address": mpv.MpvGlGetProcAddressFn(get_proc_address)},
+            opengl_init_params={"get_proc_address": mpv.MpvGlGetProcAddressFn(platform_gl.get_proc_address)},
         )
         self._ctx.update_cb = self._on_update
 
