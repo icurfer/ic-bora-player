@@ -19,6 +19,11 @@ import sys
 import tempfile
 from pathlib import Path
 
+import os
+
+# ⚠ 앱이 설정을 읽기 **전에** 격리한다 — win.state 를 나중에 바꾸는 것으로는 늦다.
+os.environ["XDG_CONFIG_HOME"] = tempfile.mkdtemp(prefix="bora-cfg-")
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "src"))
 
 import gi
@@ -55,7 +60,6 @@ class Probe(BoraApplication):
         win = self.props.active_window
         # 검증이 사용자 설정을 건드리면 최근 파일에 임시 영상이 쌓인다.
         # 실제로 12개가 쌓여 사용자 목록을 더럽혔다 — 반드시 격리한다.
-        win.state = State(Path(tempfile.mkdtemp(prefix='bora-cfg-')))
         GLib.timeout_add_seconds(SECONDS, self._finish, win)
 
     def _finish(self, win):

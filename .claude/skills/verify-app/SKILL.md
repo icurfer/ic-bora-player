@@ -25,6 +25,35 @@ description: Bora 변경을 실제로 재생시켜 검증하는 표준 절차 �
 | T5 | Ubuntu 22.04 / 24.04 / 26.04 | 세 곳 모두 T1~T4 통과 |
 | T6 | 1080p H.264 재생 | 하드웨어 디코딩(VA-API) 활성 확인 |
 
+## 돌리는 법
+
+```bash
+# 전부 (01 만 영상 인자가 필요하다 — 나머지는 스스로 만들어 쓴다)
+python3 .claude/skills/verify-app/scenarios/01-playback-renders.py <영상파일>
+for f in .claude/skills/verify-app/scenarios/0[2-9]*.py \
+         .claude/skills/verify-app/scenarios/1*.py; do
+  echo "▶ $(basename "$f")"; timeout 300 python3 "$f" | tail -3
+done
+```
+
+| 시나리오 | 무엇을 보나 | 인자 |
+|---|---|---|
+| 01 playback-renders | 실제 렌더·하드웨어 디코딩 | **영상 파일** |
+| 02 subtitle-acceptance | T1~T4 자막 수용 테스트 | — |
+| 03 ui-controls | 드롭·키·컨트롤 | — |
+| 04 playback-extras | 속도·비율·최근 파일·스크린샷 | — |
+| 05 subtitle-editor | 자막 편집·저장 | — |
+| 06 notes-panel | 메모·타임스탬프·라이브 프리뷰 | — |
+| 07 loop-and-pins | 구간 반복·핀 | — |
+| 08 stt-and-pin-title | 텍스트 추출·핀 제목 | — |
+| 09 clip-export | C1~C6 잘라내기·이어붙이기 | — |
+| 10 keys-and-logging | 키 우선순위·메뉴 위치·로그·빈 창·종료 | — |
+| 11 timeline-edit | T1~T12 타임라인 컷 편집 | — |
+
+> ⚠ **시나리오는 반드시 설정을 격리한다** — `win.state = State(Path(tempfile.mkdtemp(...)))`.
+> 예전에 이걸 빠뜨려 검증용 임시 영상 12개가 **사용자의 최근 파일 목록에 쌓였다.**
+> 새 시나리오를 복제할 때 이 줄이 따라왔는지 확인할 것.
+
 ## 규칙
 - 검증 자료(샘플 자막·영상)는 저장소에 커밋하지 말고 생성 스크립트를 `helpers/` 에 둔다.
   실제 샘플이 필요하면 `tests/fixtures/` 에 둔다 — 금칙 표현 게이트(Gate F)가 면제하는 경로다.

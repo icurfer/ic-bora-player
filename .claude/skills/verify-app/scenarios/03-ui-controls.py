@@ -22,6 +22,14 @@ import sys
 import tempfile
 from pathlib import Path
 
+import os
+import tempfile
+
+# ⚠ 앱이 설정을 읽기 **전에** 격리한다. state.config_dir() 가 이 변수를 보므로
+#    import 보다 먼저 세워야 한다 — win.state 를 나중에 바꾸는 것으로는 늦다
+#    (창이 __init__ 에서 이미 사용자 설정을 player 에 적용한다).
+os.environ["XDG_CONFIG_HOME"] = tempfile.mkdtemp(prefix="bora-cfg-")
+
 ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(ROOT / "src"))
 FIXTURES = ROOT / "tests" / "fixtures"
@@ -67,6 +75,43 @@ def wait_until(cond, timeout: float) -> bool:
     return bool(cond())
 
 
+def _button_labels(root) -> list:
+    """버튼 안의 첫 라벨들을 재귀로 모은다.
+
+    팝오버 안이 Box 한 겹이 아니다 — 메뉴가 창보다 길어 ScrolledWindow(+Viewport)로
+    감쌌기 때문이다. 구조가 또 바뀌어도 이 방식은 견딘다.
+    """
+    found: list = []
+
+    def walk(widget):
+        if widget is None:
+            return
+        if isinstance(widget, Gtk.Button):
+            label = _first_label(widget)
+            if label:
+                found.append(label)
+            return
+        child = widget.get_first_child()
+        while child is not None:
+            walk(child)
+            child = child.get_next_sibling()
+
+    walk(root)
+    return found
+
+
+def _first_label(widget) -> str:
+    if isinstance(widget, Gtk.Label):
+        return widget.get_label() or ""
+    child = widget.get_first_child()
+    while child is not None:
+        got = _first_label(child)
+        if got:
+            return got
+        child = child.get_next_sibling()
+    return ""
+
+
 def check(name: str, ok: bool, detail: str = "") -> None:
     results.append((name, bool(ok), detail))
 
@@ -95,9 +140,6 @@ def main() -> int:
             def do_activate(self):
                 super().do_activate()
                 self.win = self.props.active_window
-                # 검증이 사용자 설정을 건드리면 최근 파일에 임시 영상이 쌓인다.
-                # 실제로 12개가 쌓여 사용자 목록을 더럽혔다 — 반드시 격리한다.
-                self.win.state = State(Path(tempfile.mkdtemp(prefix='bora-cfg-')))
                 GLib.timeout_add_seconds(3, self._run, self.win)
 
             def _run(self, win):
@@ -191,16 +233,17 @@ def main() -> int:
                 win._on_right_click(None, 1, 321, 234)
                 check("우클릭 메뉴가 열린다", win._menu_popover.get_visible())
                 rect = win._menu_popover.get_pointing_to()[1]
-                check("클릭한 자리를 가리킨다(좌상단이 아니다)",
-                      rect.x == 321 and rect.y == 234, f"pointing_to=({rect.x},{rect.y})")
+                # 좌표가 클릭 지점과 **똑같을 필요는 없다** — 메뉴가 화면 밖으로 나가지
+                # 않게 안쪽으로 당기기 때문이다(오른쪽 끝에서 절반이 잘리던 문제).
+                # 지켜야 할 것은 "좌상단에 뜨지 않는다"와 "클릭한 자리 근처다" 둘이다.
+                near = abs(rect.x - 321) <= 200 and abs(rect.y - 234) <= 200
+                check("클릭한 자리 근처를 가리킨다(좌상단이 아니다)",
+                      (rect.x, rect.y) != (0, 0) and near,
+                      f"클릭(321,234) → pointing_to=({rect.x},{rect.y})")
                 menu = win._menu_popover.get_child()
-                labels = []
-                row = menu.get_first_child()
-                while row is not None:
-                    if isinstance(row, Gtk.Button):
-                        inner = row.get_child().get_first_child()
-                        labels.append(inner.get_label())
-                    row = row.get_next_sibling()
+                # 메뉴가 창보다 길면 팝오버가 안 뜨므로 ScrolledWindow 로 감쌌다.
+                # 직계 자식만 훑으면 아무것도 못 찾는다 — 버튼을 재귀로 모은다.
+                labels = _button_labels(menu)
                 check("메뉴 항목이 채워진다", len(labels) >= 8, f"{len(labels)}개: {labels[:4]}")
                 win._menu_popover.popdown()
 
@@ -214,14 +257,7 @@ def main() -> int:
                 win._rebuild_main_menu()
                 menu = win._main_popover.get_child()
                 labels = []
-                row = menu.get_first_child() if menu else None
-                while row is not None:
-                    if isinstance(row, Gtk.Button):
-                        inner = row.get_child().get_first_child()
-                        first = inner.get_first_child() if inner else None
-                        if first is not None:
-                            labels.append(first.get_label())
-                    row = row.get_next_sibling()
+                labels = _button_labels(menu)
                 check("하단 메뉴에 기능이 모인다", len(labels) >= 7, f"{labels[:5]}")
                 for want in ("자막", "오디오 트랙", "학습 메모", "자막 편집"):
                     check(f"메뉴에 '{want}'", want in labels)

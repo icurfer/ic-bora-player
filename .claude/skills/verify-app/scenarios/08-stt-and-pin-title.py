@@ -17,6 +17,14 @@ import tempfile
 import time
 from pathlib import Path
 
+import os
+import tempfile
+
+# ⚠ 앱이 설정을 읽기 **전에** 격리한다. state.config_dir() 가 이 변수를 보므로
+#    import 보다 먼저 세워야 한다 — win.state 를 나중에 바꾸는 것으로는 늦다
+#    (창이 __init__ 에서 이미 사용자 설정을 player 에 적용한다).
+os.environ["XDG_CONFIG_HOME"] = tempfile.mkdtemp(prefix="bora-cfg-")
+
 ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(ROOT / "src"))
 

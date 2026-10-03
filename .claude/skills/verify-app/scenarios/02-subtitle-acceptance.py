@@ -24,6 +24,14 @@ import sys
 import tempfile
 from pathlib import Path
 
+import os
+import tempfile
+
+# ⚠ 앱이 설정을 읽기 **전에** 격리한다. state.config_dir() 가 이 변수를 보므로
+#    import 보다 먼저 세워야 한다 — win.state 를 나중에 바꾸는 것으로는 늦다
+#    (창이 __init__ 에서 이미 사용자 설정을 player 에 적용한다).
+os.environ["XDG_CONFIG_HOME"] = tempfile.mkdtemp(prefix="bora-cfg-")
+
 ROOT = Path(__file__).resolve().parents[4]
 FIXTURES = ROOT / "tests" / "fixtures"
 
@@ -91,9 +99,6 @@ def child_main(video: str) -> int:
         def do_activate(self):
             super().do_activate()
             self.win = self.props.active_window
-            # 검증이 사용자 설정을 건드리면 최근 파일에 임시 영상이 쌓인다.
-            # 실제로 12개가 쌓여 사용자 목록을 더럽혔다 — 반드시 격리한다.
-            self.win.state = State(Path(tempfile.mkdtemp(prefix='bora-cfg-')))
             self.n = 0
             GLib.timeout_add(INTERVAL_MS, self._sample)
 
