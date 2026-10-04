@@ -56,8 +56,8 @@
 ### deb 로 설치 (권장)
 
 ```bash
-wget https://github.com/icurfer/ic-bora-player/raw/main/dist/bora_0.26.0_all.deb
-sudo apt install ./bora_0.26.0_all.deb
+wget https://github.com/icurfer/ic-bora-player/raw/main/dist/bora_0.26.1_all.deb
+sudo apt install ./bora_0.26.1_all.deb
 bora <영상파일>
 ```
 
