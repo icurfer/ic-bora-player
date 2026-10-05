@@ -101,7 +101,7 @@ class Probe(BoraApplication):
             w.open_path(a)
             check('메모 충돌 시 영상·버퍼 보존', w.current_path == b and notes._text() == 'unsaved memo')
             check('메모 충돌 시 종료 중단', w._on_close() is True and w.player.alive)
-            check('충돌 해결 후 저장', notes.save(force=True))
+            check('충돌 편집 보관 후 외부 내용 복원', notes._preserve_and_reload())
             notes._buffer.set_text('write failure memo')
             with patch.object(notes.doc, 'save', side_effect=OSError('test write failure')):
                 w.open_path(a)
@@ -113,18 +113,11 @@ class Probe(BoraApplication):
 
             notes._buffer.set_text('question\nfollowing paragraph')
             notes._buffer.place_cursor(notes._buffer.get_start_iter())
-            with patch.object(panel_module, 'ai_ready', return_value=(True, 'ready')), \
-                    patch.object(panel_module, 'AskRunner', FakeAsk):
-                check('모의 AI 요청 시작', notes.ask_current_line())
-                request = notes._ask
-                request.callbacks['on_delta']('ANSWER')
-                check('답변이 질문 아래에 삽입', pump_until(lambda: 'ANSWER' in notes._text())
-                      and notes._text().index('ANSWER') < notes._text().index('following paragraph'))
-                request.callbacks['on_delta']('STALE RESPONSE')
-                w.open_path(b)
-                check('문서 전환 시 요청 취소', request.cancelled)
-                pump_until(lambda: not GLib.MainContext.default().pending(), .2)
-                check('이전 응답이 새 메모에 섞이지 않음', 'STALE RESPONSE' not in notes._text())
+            with patch.object(w, 'open_codex_terminal', return_value=True) as launch:
+                check('메모 질문을 기본 터미널에 전달', notes.ask_current_line())
+                check('터미널 질문 내용', launch.call_args.args == ('question',))
+                check('질문 전달이 메모를 바꾸지 않음', notes._text() == 'question\nfollowing paragraph')
+            w.open_path(b)
 
             external = folder / 'unrelated.srt'
             external.write_text('1\n00:00:00,000 --> 00:00:08,000\nexternal subtitle\n')

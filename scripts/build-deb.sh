@@ -6,9 +6,8 @@
 #   bash scripts/build-deb.sh          -> dist/bora_<버전>_all.deb
 #   sudo apt install ./dist/bora_*.deb
 #
-# ⚠ 선택 기능(AI 질의·텍스트 추출)은 deb 에 넣지 않는다.
-#   anthropic·faster-whisper 는 데비안 패키지가 없고, 모델까지 수백 MB 다.
-#   설치 후 scripts/install-ai.sh · install-stt.sh 로 각자 넣는다.
+# Codex 연동 UI는 기본 포함한다. 로컬 Codex 실행 파일·ChatGPT 로그인은 사용자가 준비한다.
+# 대용량 STT 모델만 별도 선택 설치한다.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
@@ -52,7 +51,7 @@ chmod 755 "$ROOT/usr/bin/bora"
 
 install -m 644 README.md "$ROOT/usr/share/doc/$PKG/"
 install -m 644 CHANGELOG.md "$ROOT/usr/share/doc/$PKG/"
-install -m 644 scripts/install-ai.sh scripts/install-stt.sh "$ROOT/usr/share/doc/$PKG/"
+install -m 644 scripts/install-stt.sh "$ROOT/usr/share/doc/$PKG/"
 
 INSTALLED_KB="$(du -sk "$ROOT" | cut -f1)"
 
@@ -65,7 +64,7 @@ Architecture: all
 Maintainer: icurfer <noreply@icurfer.com>
 Installed-Size: $INSTALLED_KB
 Depends: python3 (>= 3.10), python3-gi, python3-gi-cairo, gir1.2-gtk-4.0, gir1.2-adw-1, python3-mpv, ffmpeg
-Recommends: ffmpeg, fonts-noto-cjk
+Recommends: ffmpeg, fonts-noto-cjk, gnome-terminal
 Suggests: python3-venv
 Description: 국내 자막을 제대로 다루는 리눅스 미디어 플레이어
  libmpv 를 엔진으로 쓰는 GTK4 플레이어. CP949 인코딩 자동 판정, 한·영 통합 SAMI
@@ -74,8 +73,8 @@ Description: 국내 자막을 제대로 다루는 리눅스 미디어 플레이�
  강의 학습 도구이기도 하다 — 타임스탬프가 붙는 마크다운 메모, 구간 반복(A-B), 핀,
  음성 텍스트 추출, AI 질의를 제공한다.
  .
- 텍스트 추출(faster-whisper)과 AI 질의(anthropic)는 선택 기능이며 별도 설치가 필요하다:
- /usr/share/doc/bora/README.md 참고.
+ Codex 터미널 작업과 앱 안 대화 UI를 기본 제공한다. 로컬 Codex와 ChatGPT 로그인이 필요하다.
+ 텍스트 추출(faster-whisper)만 별도 설치가 필요하다. /usr/share/doc/bora/README.md 참고.
 EOF
 
 cat > "$ROOT/DEBIAN/postinst" <<'EOF'

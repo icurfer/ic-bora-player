@@ -1,149 +1,240 @@
-"""AI 질의 — 별도 프로세스를 띄우고 답을 스트리밍으로 받는다."""
-
+"""로컬 Codex app-server 연결. ChatGPT 로그인만 사용하며 API로 전환하지 않는다."""
 from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
+import queue
 import shutil
 import subprocess
+import tempfile
 import threading
-from pathlib import Path
+import time
 
-from ..log import get as get_logger
-from ..platform import paths as platform_paths
 from .context import Question, build, to_request
 
-log = get_logger("ai.client")
-
-MODELS = (
-    ("claude-opus-5", "가장 똑똑함 · $5/$25 per 1M"),
-    ("claude-sonnet-5", "빠르고 저렴 · $2/$10 per 1M"),
-)
+MODELS = ()  # 모델은 사용자의 Codex 설정을 따른다.
+DEFAULT_MODEL = ''
 
 
-def repo_root() -> Path:
-    here = Path(__file__).resolve()
-    for parent in here.parents:
-        if (parent / "pyproject.toml").is_file():
-            return parent
-    return platform_paths.data_dir()
+def codex_command():
+    found = shutil.which('codex')
+    if found:
+        return found
+    local = Path.home() / '.local/bin/codex'
+    return str(local) if local.is_file() and os.access(local, os.X_OK) else None
 
 
-def venv_python() -> Path:
-    local = platform_paths.venv_python(repo_root() / ".venv")
-    if local.is_file():
-        return local
-    return platform_paths.venv_python(platform_paths.data_dir() / ".venv")
+def sdk_installed():
+    return codex_command() is not None
 
 
-def sdk_installed() -> bool:
-    python = venv_python()
-    if not python.is_file():
-        return False
+def ensure_ready():
+    if not codex_command():
+        return False, 'Codex가 설치되지 않았습니다. 메뉴 → Codex 연결에서 설치 안내를 확인하세요.'
+    return True, '로컬 Codex 준비됨'
+
+
+def worker_env():
+    # 기존 로그인은 Codex가 직접 읽는다. API 키·세션 주입으로 과금 경로가 바뀌지 않게 한다.
+    return {k: v for k, v in os.environ.items()
+            if not k.startswith(('OPENAI_', 'ANTHROPIC_', 'CODEX_')) or k == 'CODEX_HOME'}
+
+
+class CodexError(RuntimeError):
+    pass
+
+
+class Session:
+    def __init__(self, cancelled=None):
+        self.cancelled = cancelled or threading.Event()
+        self.proc = None
+        self.events = queue.Queue()
+        self.next_id = 0
+        self.pending = []
+        self._write_lock = threading.Lock()
+
+    def __enter__(self):
+        command = codex_command()
+        if not command:
+            raise CodexError(ensure_ready()[1])
+        self.work = tempfile.TemporaryDirectory(prefix='bora-codex-')
+        args = [command, 'app-server', '--listen', 'stdio://']
+        overrides = {
+            'model_provider': 'openai', 'forced_login_method': 'chatgpt',
+            'approval_policy': 'never', 'sandbox_mode': 'read-only',
+            'web_search': 'disabled', 'mcp_servers': {}, 'plugins': {},
+            'features.apps': False, 'features.hooks': False,
+            'features.multi_agent': False, 'features.shell_tool': False,
+            'features.code_mode_host': False,
+        }
+        for key, value in overrides.items():
+            # JSON scalar syntax is TOML-compatible. Empty tables are TOML inline tables.
+            args.extend(['-c', f'{key}={json.dumps(value)}'])
+        try:
+            self.proc = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                         stderr=subprocess.DEVNULL, text=True, env=worker_env(),
+                                         cwd=self.work.name)
+            threading.Thread(target=self._read, daemon=True).start()
+            self.rpc('initialize', {'clientInfo': {'name': 'bora', 'title': 'Bora', 'version': '0.26.3'}})
+            self.send({'method': 'initialized'})
+            return self
+        except Exception:
+            self.close()
+            raise
+
+    def _read(self):
+        try:
+            for line in self.proc.stdout:
+                try:
+                    value = json.loads(line)
+                    if isinstance(value, dict):
+                        self.events.put(value)
+                except ValueError:
+                    continue
+        finally:
+            self.events.put(None)
+
+    def send(self, value):
+        with self._write_lock:
+            self.proc.stdin.write(json.dumps(value, ensure_ascii=False) + '\n')
+            self.proc.stdin.flush()
+
+    def receive(self, deadline):
+        while not self.cancelled.is_set():
+            if time.monotonic() >= deadline:
+                raise CodexError('Codex 응답을 기다리는 시간이 길어졌습니다. 연결을 확인하고 다시 시도하세요.')
+            try:
+                event = self.events.get(timeout=.2)
+            except queue.Empty:
+                continue
+            if event is None:
+                raise CodexError('Codex 연결이 종료됐습니다. 연결 상태를 확인해 주세요.')
+            if 'method' in event and 'id' in event:
+                # 학습 대화에서 파일 변경·외부 도구 승인을 자동으로 허용하지 않는다.
+                self.send({'id': event['id'], 'error': {'code': -32601, 'message': 'Bora supports conversation only'}})
+                continue
+            return event
+        raise CodexError('대화를 중지했습니다.')
+
+    def rpc(self, method, params=None, timeout=25):
+        self.next_id += 1
+        request_id = self.next_id
+        self.send({'id': request_id, 'method': method, 'params': params or {}})
+        deadline = time.monotonic() + timeout
+        while True:
+            event = self.receive(deadline)
+            if event.get('id') == request_id:
+                if 'error' in event:
+                    raise CodexError('Codex 요청에 실패했습니다. 로그인 또는 Codex 버전을 확인해 주세요.')
+                return event.get('result') or {}
+            self.pending.append(event)
+
+    def require_chatgpt(self):
+        account = self.rpc('account/read', {'refreshToken': True}).get('account') or {}
+        if account.get('type') != 'chatgpt':
+            raise CodexError('ChatGPT 로그인이 필요합니다. 메뉴 → Codex 연결에서 다시 로그인하세요. API 키는 사용하지 않습니다.')
+
+    def close(self):
+        if self.proc is not None:
+            if self.proc.poll() is None:
+                self.proc.terminate()
+                try:
+                    self.proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    self.proc.kill()
+                    self.proc.wait()
+            for pipe in (self.proc.stdin, self.proc.stdout):
+                if pipe:
+                    pipe.close()
+        if hasattr(self, 'work'):
+            self.work.cleanup()
+
+    def __exit__(self, *_):
+        self.close()
+
+
+def check_connection():
     try:
-        return subprocess.run([str(python), "-c", "import anthropic"],
-                              capture_output=True, timeout=30).returncode == 0
-    except (OSError, subprocess.SubprocessError):
-        return False
-
-
-def has_credentials() -> bool:
-    """앱은 키를 저장하지 않는다. 환경변수나 `ant` 프로필이 있는지만 본다."""
-    if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"):
-        return True
-    if (Path.home() / ".config" / "anthropic").is_dir():
-        return True
-    return bool(shutil.which("ant"))
-
-
-def ensure_ready() -> tuple[bool, str]:
-    if not sdk_installed():
-        return False, ("AI 질의가 설치되지 않았다.\n"
-                       "deb: bash /usr/share/doc/bora/install-ai.sh\n"
-                       "소스: bash scripts/install-ai.sh")
-    if not has_credentials():
-        return False, ("API 키가 없다. 앱은 키를 저장하지 않는다 — 둘 중 하나를 쓴다:\n"
-                       "  export ANTHROPIC_API_KEY=sk-ant-...\n"
-                       "  ant auth login")
-    return True, "준비됨"
+        with Session() as session:
+            session.require_chatgpt()
+        return 'ChatGPT 로그인 확인됨 · 구독 사용 한도 적용 · API 자동 전환 없음'
+    except CodexError as exc:
+        return str(exc)
+    except Exception:
+        return 'Codex에 연결하지 못했습니다. 설치 상태와 네트워크를 확인하세요.'
 
 
 class AskRunner:
-    """질문 하나를 던지고 답을 조각으로 받는다. 한 번에 하나만 돈다."""
-
-    def __init__(self, on_delta=None, on_done=None, on_error=None) -> None:
-        self.on_delta = on_delta        # (텍스트 조각)
-        self.on_done = on_done          # (비용, usage dict)
-        self.on_error = on_error        # (메시지)
-        self._proc: subprocess.Popen | None = None
-        self._cancelled = False
+    def __init__(self, on_delta=None, on_done=None, on_error=None):
+        self.on_delta, self.on_done, self.on_error = on_delta, on_done, on_error
+        self._thread = None
+        self._cancelled = threading.Event()
 
     @property
-    def running(self) -> bool:
-        return self._proc is not None and self._proc.poll() is None
+    def running(self):
+        return self._thread is not None and self._thread.is_alive()
 
-    def ask(self, question: Question) -> bool:
+    def cancel(self):
+        self._cancelled.set()
+
+    def ask(self, question):
         if self.running:
             return False
-        ready, hint = ensure_ready()
+        ready, message = ensure_ready()
         if not ready:
-            self._fail(hint)
+            if self.on_error:
+                self.on_error(message)
             return False
-
-        payload = json.dumps(to_request(build(question)), ensure_ascii=False)
-        worker = Path(__file__).with_name("worker.py")
-        try:
-            self._proc = subprocess.Popen(
-                [str(venv_python()), str(worker)],
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, bufsize=1,
-            )
-        except OSError as exc:
-            self._fail(f"AI 프로세스를 띄우지 못했다: {exc}")
-            return False
-
-        self._cancelled = False
-        threading.Thread(target=self._pump, args=(payload,), daemon=True).start()
-        log.info("질문: %s (%s)", question.text[:40], question.model)
+        self._cancelled.clear()
+        self._thread = threading.Thread(target=self._pump, args=(question,), daemon=True)
+        self._thread.start()
         return True
 
-    def cancel(self) -> None:
-        if self.running:
-            self._cancelled = True
-            self._proc.terminate()
-
-    def _pump(self, payload: str) -> None:
-        proc = self._proc
-        assert proc is not None and proc.stdin is not None and proc.stdout is not None
+    def _pump(self, question):
         try:
-            proc.stdin.write(payload)
-            proc.stdin.close()
-        except OSError:
-            pass
-        for line in proc.stdout:
-            line = line.strip()
-            if not line.startswith("{"):
-                continue
-            try:
-                event = json.loads(line)
-            except ValueError:
-                continue
-            kind = event.get("type")
-            if kind == "delta" and self.on_delta:
-                self.on_delta(event.get("text") or "")
-            elif kind == "done" and self.on_done:
-                self.on_done(float(event.get("cost") or 0.0), event.get("usage") or {})
-            elif kind == "error":
-                self._fail(str(event.get("message") or "알 수 없는 오류"))
-        code = proc.wait()
-        if self._cancelled:
-            self._fail("취소됨")
-        elif code != 0:
-            tail = (proc.stderr.read() or "").strip()[-300:] if proc.stderr else ""
-            if tail:
-                self._fail(f"AI 실패 (코드 {code}) {tail}")
-
-    def _fail(self, message: str) -> None:
-        log.warning("AI: %s", message)
-        if self.on_error:
-            self.on_error(message)
+            with Session(self._cancelled) as session:
+                session.require_chatgpt()
+                request = to_request(build(question))
+                thread = session.rpc('thread/start', {
+                    'cwd': session.work.name, 'ephemeral': True,
+                    'approvalPolicy': 'never', 'sandbox': 'read-only',
+                    'baseInstructions': request['instructions'],
+                    'developerInstructions': '제공된 학습 자료로 대화만 한다. 도구 실행, 파일 읽기나 수정, 웹 검색을 하지 않는다.',
+                })['thread']['id']
+                result = session.rpc('turn/start', {'threadId': thread, 'input': [
+                    {'type': 'text', 'text': request['input']}], 'serviceTierForTurn': 'default'})
+                turn = result['turn']['id']
+                deadline = time.monotonic() + 180
+                text_seen = {}
+                while True:
+                    event = session.pending.pop(0) if session.pending else session.receive(deadline)
+                    method, params = event.get('method'), event.get('params') or {}
+                    if params.get('threadId') != thread or params.get('turnId', turn) != turn:
+                        continue
+                    if method == 'item/agentMessage/delta':
+                        item = params.get('itemId', '')
+                        delta = params.get('delta', '')
+                        text_seen[item] = text_seen.get(item, '') + delta
+                        if self.on_delta:
+                            self.on_delta(delta)
+                    elif method == 'item/completed':
+                        item = params.get('item') or {}
+                        if item.get('type') == 'agentMessage' and item.get('id') not in text_seen:
+                            text_seen[item.get('id')] = item.get('text', '')
+                            if self.on_delta:
+                                self.on_delta(item.get('text', ''))
+                    elif method == 'turn/completed':
+                        if (params.get('turn') or {}).get('status') != 'completed':
+                            raise CodexError('Codex가 답변을 완료하지 못했습니다. 로그인·사용 한도·연결 상태를 확인하세요.')
+                        if not any(text_seen.values()):
+                            raise CodexError('Codex가 답변을 보내지 않았습니다. 다시 질문해 주세요.')
+                        if self.on_done:
+                            self.on_done(None, {})
+                        return
+        except CodexError as exc:
+            if not self._cancelled.is_set() and self.on_error:
+                self.on_error(str(exc))
+        except Exception:
+            if not self._cancelled.is_set() and self.on_error:
+                self.on_error('Codex 연결에 실패했습니다. 메뉴 → Codex 연결에서 확인하세요.')

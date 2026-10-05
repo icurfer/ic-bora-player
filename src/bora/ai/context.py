@@ -42,7 +42,8 @@ class Question:
     subtitle_path: Path | None = None
     note_text: str = ""
     note_line: int = -1
-    model: str = "claude-opus-5"
+    model: str = ""
+    history: list = field(default_factory=list)
     full_subtitle: str = field(default="", repr=False)
     nearby_subtitle: str = field(default="", repr=False)
     note_excerpt: str = field(default="", repr=False)
@@ -89,7 +90,7 @@ def build(question: Question) -> Question:
     here = int(question.position * 1000)
     nearby = _cues_to_text(cues, here - WINDOW_SECONDS * 1000, here + WINDOW_SECONDS * 1000)
 
-    question.full_subtitle = full if len(full) >= MIN_CACHE_CHARS else ""
+    question.full_subtitle = ""  # 로컬 Codex에는 주변 자막만 전달하여 사용량을 줄인다.
     question.nearby_subtitle = nearby
     question.note_excerpt = _note_excerpt(question.note_text, question.note_line)
     log.debug("맥락: 자막 전체 %d자, 부근 %d자, 메모 %d자",
@@ -99,25 +100,31 @@ def build(question: Question) -> Question:
 
 def to_request(question: Question) -> dict:
     """worker 에 넘길 요청. 캐시가 걸리도록 **고정 → 가변** 순서를 지킨다."""
-    system: list[dict] = [{"type": "text", "text": SYSTEM}]
+    parts = [f"영상: {question.video_title}\n현재 시각: {ms_to_srt(int(question.position * 1000))[:8]}"]
+    history = []
+    budget = 24000
+    for message in reversed(question.history[-20:]):
+        text = message.get("content", "")
+        if len(text) > budget:
+            break
+        history.append({"role": message.get("role"), "content": text,
+                        "status": message.get("status", "completed")})
+        budget -= len(text)
+    if history:
+        import json
+        parts.append("## 이전 대화 (최근 20개 메시지 이내)\n" + json.dumps(list(reversed(history)), ensure_ascii=False))
     if question.full_subtitle:
-        # 강의마다 한 번만 값을 치르고 이후 질문은 캐시를 읽는다.
-        system.append({
-            "type": "text",
-            "text": f"# 강의 자막 전체: {question.video_title}\n\n{question.full_subtitle}",
-            "cache_control": {"type": "ephemeral"},
-        })
+        parts.append(f"# 강의 자막 전체: {question.video_title}\n\n{question.full_subtitle}")
 
-    parts = []
     if question.nearby_subtitle:
         parts.append(f"## 지금 보고 있는 대목 ({ms_to_srt(int(question.position * 1000))[:8]} 근처)\n"
-                     f"{question.nearby_subtitle}")
+                     f"{question.nearby_subtitle[:16000]}")
     if question.note_excerpt:
-        parts.append(f"## 내 메모\n{question.note_excerpt}")
+        parts.append(f"## 내 메모\n{question.note_excerpt[:8000]}")
     parts.append(f"## 질문\n{question.text}")
 
     return {
         "model": question.model,
-        "system": system,
-        "user": "\n\n".join(parts),
+        "instructions": SYSTEM,
+        "input": "\n\n".join(parts),
     }

@@ -19,7 +19,8 @@
 | **자막** | CP949 자동 판정 · 한·영 통합 SAMI 분리 · 싱크·위치·글꼴 조절 · 편집기 |
 | **학습** | 타임스탬프 메모(마크다운) · 구간 반복 · 핀 · 스크린샷 |
 | **편집** | 하단 타임라인에서 자르고(`S`) 지우고 경계를 끌어 다듬은 뒤 내보낸다 |
-| **선택 설치** | 음성에서 자막 만들기(faster-whisper) · 메모에서 AI 질의 |
+| **Codex** | 메모 폴더에서 터미널 작업(기본) · 앱 안 대화(추가) |
+| **선택 설치** | 음성에서 자막 만들기(faster-whisper) |
 
 ## 왜 만드나
 
@@ -77,16 +78,32 @@ bash scripts/build-deb.sh            # deb 를 직접 만들려면
 bash scripts/install-desktop.sh      # 앱 목록에만 등록(개발용, --remove 로 되돌림)
 ```
 
-### 선택 기능
+### Codex와 메모 작업
+
+연동 기능은 보라 패키지에 포함된다. Python AI SDK나 API 키는 필요 없다.
+로컬 [Codex CLI](https://learn.chatgpt.com/docs/quickstart)를 설치하고
+**메뉴 → Codex 연결 → ChatGPT 로그인**으로 연결한다. 기존 Codex 로그인도 사용한다.
+
+- **기본: 메뉴 → Codex와 파일 작업.** 현재 메모를 저장하고 그 폴더에서 Codex 터미널을 연다.
+  영상·메모·자막 경로가 전달되며 질문, 후속 대화, 요청한 파일 수정을 할 수 있다.
+  메모의 `Ctrl+Enter`는 현재 줄을 첫 질문으로 전달한다. 터미널은 별도 창이다.
+- **추가: 메뉴 → Codex 대화 또는 오른쪽 아래 Codex 대화.** 영상별 대화를 저장한다.
+  현재 시각과, 체크한 경우 주변 자막·메모 일부를 함께 보낸다. 최근 대화 최대 20개 메시지를
+  맥락으로 사용한다. 답변은 사용자가 **메모에 넣기**를 누를 때 메모에 들어간다.
+- 보라로 돌아오면 외부 메모 변경을 확인한다. 편집 중인 내용이 없으면 자동 반영하고,
+  편집 중인 내용과 겹치면 자동 저장을 막아 양쪽 내용을 보존한다.
+- 대화 기록: `${XDG_DATA_HOME:-~/.local/share}/bora/conversations`의 영상 경로별 JSON.
+  인증 정보는 Codex가 관리하며 보라 설정이나 메모에 복사하지 않는다.
+- ChatGPT 사용 한도가 적용되며 온라인 연결이 필요하다. API 키나 별도 유료 API로 자동 전환하지 않는다.
+  터미널에서 사용자가 실행한 파일 작업과 앱 대화는 서로 별도의 대화 기록이다.
+
+### 선택 기능: 음성 인식
 
 없어도 재생·자막·메모는 그대로 동작한다.
 
 ```bash
-# deb 설치본
 bash /usr/share/doc/bora/install-stt.sh   # 음성 텍스트 추출
-bash /usr/share/doc/bora/install-ai.sh    # AI 질의
-# 소스에서는 위 두 스크립트를 scripts/ 아래에서 실행한다.
-export ANTHROPIC_API_KEY=sk-ant-...   # AI 질의용. 앱은 키를 저장하지 않는다
+# 소스에서는 scripts/install-stt.sh
 ```
 
 선택 기능의 기본 설치 위치는 `${XDG_DATA_HOME:-~/.local/share}/bora`다.
@@ -115,7 +132,7 @@ export ANTHROPIC_API_KEY=sk-ant-...   # AI 질의용. 앱은 키를 저장하지
 타임라인에서 **눈금 띠**를 누르면 재생헤드가 옮겨 가고, **필름스트립 본체**를 누르면 구간이
 선택될 뿐 재생은 이어진다. 지운 구간을 지날 때는 화면이 검게 덮인다.
 
-메모 안에서: `Ctrl+T` 현재 시각 넣기 · `Ctrl+Enter` 이 줄을 AI 에게 묻기 · `Ctrl+S` 저장
+메모 안에서: `Ctrl+T` 현재 시각 넣기 · `Ctrl+Enter` 이 줄을 Codex 터미널에 전달 · `Ctrl+S` 저장
 
 ## 개발 규율
 

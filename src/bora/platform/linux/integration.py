@@ -115,3 +115,30 @@ def unsupported_reason() -> str:
     if app_info() is None:
         return "앱이 설치되어 있지 않다 (.desktop 을 찾지 못했다)"
     return ""
+
+
+def terminal_command(argv, cwd):
+    """인자를 셸 문자열로 합치지 않는다. 공백·한글 경로도 그대로 전달한다."""
+    import shutil
+    if shutil.which('gnome-terminal'):
+        return ['gnome-terminal', '--working-directory', str(cwd), '--', *argv]
+    if shutil.which('konsole'):
+        return ['konsole', '--workdir', str(cwd), '-e', *argv]
+    if shutil.which('xterm'):
+        return ['xterm', '-e', *argv]
+    raise OSError('터미널이 없습니다. gnome-terminal을 설치한 뒤 다시 시도하세요.')
+
+
+def launch_terminal(argv, cwd, env):
+    import subprocess
+    # gnome-terminal 서버에 환경변수를 명시 전달하여 API 키를 상속하지 않는다.
+    clean = ['env', '-u', 'OPENAI_API_KEY', '-u', 'CODEX_API_KEY', '-u', 'OPENAI_BASE_URL', *argv]
+    process = subprocess.Popen(terminal_command(clean, cwd), cwd=cwd, env=env,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        code = process.wait(timeout=1)
+        if code:
+            raise OSError('터미널을 열지 못했습니다.')
+    except subprocess.TimeoutExpired:
+        # 열린 터미널은 보라 종료 뒤에도 사용자가 작업할 수 있다.
+        return

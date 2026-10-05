@@ -91,6 +91,7 @@ class NoteDocument:
         self.text = text
         self.saved_text = text
         self._mtime = mtime
+        self._disk_text = text if mtime is not None else None
 
     # ── 경로 ─────────────────────────────────────────────────────────────
     @staticmethod
@@ -125,16 +126,15 @@ class NoteDocument:
 
     def changed_outside(self) -> bool:
         """우리가 저장한 뒤 밖에서 고쳐졌나. 덮어쓰기 전에 확인한다."""
-        if self._mtime is None or not self.path.is_file():
-            return False
         try:
-            return self.path.stat().st_mtime > self._mtime + 0.001
-        except OSError:
-            return False
+            current = self.path.read_text(encoding="utf-8") if self.path.exists() else None
+            return current != self._disk_text
+        except (OSError, UnicodeError):
+            return True
 
     def save(self) -> bool:
         """원자적으로 쓴다. 바뀐 게 없으면 아무 것도 하지 않는다."""
-        if not self.dirty:
+        if not self.dirty and self.path.is_file():
             return False
         body = self.text
         if body and not body.endswith("\n"):
@@ -148,6 +148,7 @@ class NoteDocument:
             tmp.unlink(missing_ok=True)
             raise
         self.saved_text = self.text
+        self._disk_text = body
         try:
             self._mtime = self.path.stat().st_mtime
         except OSError:

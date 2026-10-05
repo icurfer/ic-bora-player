@@ -48,7 +48,7 @@ class BoraWindow(Adw.ApplicationWindow):
     UI_TRANSITION_MS = 250     # 접히고 펴지는 시간
 
     def __init__(self, app: Adw.Application) -> None:
-        super().__init__(application=app, default_width=960, default_height=560, title="Bora")
+        super().__init__(application=app, default_width=960, default_height=700, title="Bora")
 
         self.player = Player()
         self._seeking = False          # 사용자가 슬라이더를 잡고 있는 동안은 갱신하지 않는다
@@ -68,6 +68,7 @@ class BoraWindow(Adw.ApplicationWindow):
         self._stt: ExtractRunner | None = None
         self._stt_bar: Gtk.ProgressBar | None = None
         self._last_toast_title: str | None = None
+        self._ai_settings = None
 
         # 하위 메뉴 팝오버. 부모는 하단 메뉴 버튼에 붙인다.
         self._sub_popover = Gtk.Popover()
@@ -118,8 +119,16 @@ class BoraWindow(Adw.ApplicationWindow):
                                 shrink_start_child=False, shrink_end_child=False)
         self._paned.set_start_child(self._video_stack)
         self._notes = NotePanel(self)
-        self._paned.set_end_child(self._notes)
-        self._notes.set_visible(False)          # 기본은 접어 둔다
+        from .ai.panel import ChatPanel
+        self._chat = ChatPanel(self)
+        self._study = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL, width_request=340,
+                                vexpand=True, resize_start_child=True, resize_end_child=True,
+                                shrink_start_child=False, shrink_end_child=False, wide_handle=True)
+        self._study.set_start_child(self._notes)
+        self._study.set_end_child(self._chat)
+        self._study.set_position(230)
+        self._paned.set_end_child(self._study)
+        self._study.set_visible(False)
         root.append(self._paned)
 
         self._controls = self._build_controls()
@@ -163,6 +172,7 @@ class BoraWindow(Adw.ApplicationWindow):
         self._setup_context_menu()
         self.connect("notify::fullscreened", self._on_fullscreen_changed)
         self.connect("close-request", self._on_close)
+        self.connect("notify::is-active", lambda *_: self._notes.refresh_external() if self.is_active() else None)
 
     # ── 입력 ─────────────────────────────────────────────────────────────
     def _setup_drop_target(self, widget: Gtk.Widget) -> None:
@@ -453,7 +463,7 @@ class BoraWindow(Adw.ApplicationWindow):
         self._controls_revealer.set_reveal_child(visible)
         # 전체화면에서 영상을 가리지 않게 메모도 함께 접는다(내용은 그대로 있다).
         if self.is_fullscreen():
-            self._notes.set_visible(visible and self._notes_open)
+            self._study.set_visible(visible and self._notes_open)
         # 감출 때는 마우스 커서도 같이 감춘다(영상 위에 남으면 거슬린다).
         self.set_cursor(None if visible else Gdk.Cursor.new_from_name("none", None))
 
@@ -702,19 +712,56 @@ class BoraWindow(Adw.ApplicationWindow):
             self.toast("영상을 먼저 열어라")
             want = False
         self._notes_open = want
-        self._notes.set_visible(want)
+        self._study.set_visible(want)
         if want:
             if self._notes.doc is None or self._notes.doc.path != NoteDocument.path_for(self._current):
                 if not self._notes.load_for(self._current, self._current.stem):
                     return
-            self._notes.set_visible(True)
+            self._study.set_visible(True)
             # 처음 열 때 절반쯤 차지하게 둔다
             if self._paned.get_position() <= 0:
                 self._paned.set_position(max(360, self.get_width() - 380))
+            self._chat.refresh_context()
             self._notes.focus_editor()
         else:
             self._notes.save()
         log.debug("메모 패널: %s", want)
+
+    def open_codex_terminal(self, question=None):
+        if self._current is None:
+            self.toast("영상을 먼저 열어 주세요")
+            return False
+        self.toggle_notes(True)
+        if (self._notes.doc is None
+                or self._notes.doc.path != NoteDocument.path_for(self._current)):
+            return False
+        if not self._notes.prepare_codex():
+            return False
+        from .ai.workspace import launch
+        import threading
+        video, note = self._current, self._notes.doc.path
+        subtitle = self._plan.source if self._plan else None
+        self.toast("메모 폴더에서 Codex 터미널을 여는 중…")
+        def run():
+            try:
+                launch(video, note, subtitle, question)
+                message = "Codex 터미널을 열었습니다. 파일 변경은 보라로 돌아오면 확인합니다."
+            except (OSError, RuntimeError):
+                message = "Codex 터미널을 열지 못했습니다. Codex와 터미널 설치를 확인하세요."
+            GLib.idle_add(self.toast, message)
+        threading.Thread(target=run, daemon=True).start()
+        return True
+
+    def show_chat(self, question=None):
+        self.toggle_notes(True)
+        if self._current is None:
+            return
+        if not self._chat.load_for(self._current):
+            self.toast("대화 기록을 열지 못했습니다. 아래쪽 Codex 대화에서 확인하세요.")
+        if question is not None:
+            self._chat.set_question(question)
+        else:
+            self._chat.focus_editor()
 
     # ── 자막 편집 ────────────────────────────────────────────────────────
     def open_editor(self) -> EditorWindow | None:
@@ -1367,6 +1414,12 @@ class BoraWindow(Adw.ApplicationWindow):
 
         box.append(self._menu_row("학습 메모", "M", self.toggle_notes,
                                   "열려 있다" if self._notes_open else "영상 옆 .md 에 기록"))
+        box.append(self._menu_row("Codex와 파일 작업", "", self.open_codex_terminal,
+                                  "메모 폴더에서 터미널 열기 · 기본"))
+        box.append(self._menu_row("Codex 대화", "", self.show_chat,
+                                  "현재 영상에 대해 물어보기"))
+        box.append(self._menu_row("Codex 연결", "", self.show_ai_settings,
+                                  "ChatGPT 로그인 · 연결 확인"))
         ready, _hint = ensure_ready()
         box.append(self._menu_row("음성에서 자막 만들기", "", self._show_extract_menu,
                                   "준비됨" if ready else "설치 필요"))
@@ -1400,6 +1453,17 @@ class BoraWindow(Adw.ApplicationWindow):
                 box.append(self._menu_row(item.title, "",
                                           lambda p=item.path: self.open_path(Path(p))))
         self._main_popover.set_child(self._scrollable_menu(box))
+
+    def show_ai_settings(self):
+        if self._ai_settings is None:
+            from .ai.settings import AISettingsWindow
+            self._ai_settings = AISettingsWindow(self)
+            self._ai_settings.connect("close-request", self._on_ai_settings_closed)
+        self._ai_settings.present()
+
+    def _on_ai_settings_closed(self, *_args):
+        self._ai_settings = None
+        return False
 
     # ── 로그 ─────────────────────────────────────────────────────────────
     def _log_file_target(self) -> Path:
@@ -1688,9 +1752,16 @@ class BoraWindow(Adw.ApplicationWindow):
             return
         if not self._confirm_discard_edit("파일을 바꾸려면 같은 파일로", str(path.resolve())):
             return
+        if not self._chat.prepare_leave():
+            self._study.set_visible(True)
+            self.toast("대화 기록을 저장하지 못했습니다. 내용을 보존했습니다.")
+            return
         if self._notes.doc is not None or self._notes_open:
             if not self._notes.load_for(path, path.stem):
                 return
+        if not self._chat.load_for(path):
+            self._study.set_visible(True)
+            return
         self._remember_position()          # 넘어가기 전에 지금 파일 위치를 남긴다
         self._media_generation += 1
         self._notes.cancel_ask()
@@ -1850,8 +1921,13 @@ class BoraWindow(Adw.ApplicationWindow):
             return True
         if not self._confirm_discard_edit("종료하려면", "close-window"):
             return True
+        if not self._chat.prepare_leave():
+            self._study.set_visible(True)
+            return True
         self._media_generation += 1
         self._notes.cancel_ask()
+        if self._ai_settings is not None:
+            self._ai_settings.close()
         # ⚠ 타이머를 **먼저** 뗀다. 남겨 두면 player.close() 뒤에 한 박자 더 돌아
         #   죽은 mpv 코어를 건드리고 ShutdownError 로 크래시 리포터까지 뜬다.
         for name in ("_tick_id", "_remember_id", "_hide_ui_id"):

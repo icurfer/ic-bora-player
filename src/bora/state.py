@@ -121,7 +121,7 @@ class Settings:
     sub_font: str = ""
     sub_color: str = ""
     sub_pos: float = 100.0          # 0 = 화면 위, 100 = 기본(아래)
-    ai_model: str = "claude-opus-5"
+    ai_model: str = ""
     screenshot_dir: str = ""
     # 로그 등급. 빈 값이면 명령줄(--debug)·환경변수(BORA_DEBUG)가 정한 대로 둔다.
     log_level: str = ""
@@ -165,6 +165,9 @@ class State:
         for key, value in (raw.get("settings") or {}).items():
             if key in known and _valid_setting(key, value, getattr(self.settings, key)):
                 setattr(self.settings, key, value)
+
+        if not self.settings.ai_model or self.settings.ai_model.startswith("claude-"):
+            self.settings.ai_model = Settings().ai_model
 
         for key, item in (raw.get("recent") or {}).items():
             try:

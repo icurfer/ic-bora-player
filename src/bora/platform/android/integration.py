@@ -11,3 +11,5 @@ from ..base import can_set_default, is_default, set_default, snapshot_defaults  
 
 def unsupported_reason() -> str:
     return "안드로이드는 기본 앱을 시스템 설정에서 고른다"
+
+from ..base import launch_terminal  # noqa: F401

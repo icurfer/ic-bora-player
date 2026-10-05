@@ -146,13 +146,10 @@ def main() -> int:
                 before = panel._text()
                 # 실제 자격 증명이 있어도 자동 검증에서 유료 요청을 보내지 않는다.
                 from unittest.mock import patch
-                with patch("bora.notes.panel.ai_ready", return_value=(False, "API 키 없이 검증 중")):
+                with patch.object(win, "open_codex_terminal", return_value=True) as launch:
                     asked = panel.ask_current_line()
-                check("A2 키 없으면 조용히 거절한다", asked is False)
-                check("A2 메모를 건드리지 않는다", panel._text() == before,
-                      "그대로" if panel._text() == before else "바뀜")
-                check("A2 안내가 뜬다", "API" in (win._last_toast_title or ""),
-                      win._last_toast_title or "(없음)")
+                check("A2 기본 Codex 터미널에 질문 전달", asked is True and launch.called)
+                check("A2 메모를 건드리지 않는다", panel._text() == before)
                 check("A2 재생은 계속 정상", (p.duration or 0) > 0)
 
                 p.close()

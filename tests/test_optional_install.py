@@ -4,13 +4,12 @@ import os
 import subprocess
 
 import pytest
-from bora.ai import client
 from bora.stt import install
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-@pytest.mark.parametrize('kind,module,folder', [('ai', client, '.venv'), ('stt', install, '.venv-stt')])
+@pytest.mark.parametrize('kind,module,folder', [('stt', install, '.venv-stt')])
 def test_installed_script_and_runtime_agree(tmp_path, monkeypatch, kind, module, folder):
     data = tmp_path / 'data with spaces'
     monkeypatch.setattr(module, 'repo_root', lambda: data / 'bora')
@@ -21,7 +20,7 @@ def test_installed_script_and_runtime_agree(tmp_path, monkeypatch, kind, module,
     assert Path(result.stdout.strip()) / 'bin/python' == module.venv_python()
 
 
-@pytest.mark.parametrize('module,folder', [(client, '.venv'), (install, '.venv-stt')])
+@pytest.mark.parametrize('module,folder', [(install, '.venv-stt')])
 def test_development_venv_and_user_fallback(tmp_path, monkeypatch, module, folder):
     repo = tmp_path / 'repo'
     user = tmp_path / 'user'

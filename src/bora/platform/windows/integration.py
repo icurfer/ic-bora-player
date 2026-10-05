@@ -16,3 +16,5 @@ from ..base import can_set_default, is_default, set_default, snapshot_defaults  
 def unsupported_reason() -> str:
     return ("윈도우는 기본 앱을 설정 앱에서 직접 고르게 한다 — "
             "설정 → 앱 → 기본 앱에서 Bora 를 고르면 된다")
+
+from ..base import launch_terminal  # noqa: F401

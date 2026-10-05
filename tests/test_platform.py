@@ -22,7 +22,7 @@ PLATFORMS = ("linux", "windows", "macos", "android")
 GL_NAMES = ("available", "get_proc_address", "current_fbo")
 PATH_NAMES = ("config_dir", "cache_dir", "data_dir", "venv_python", "venv_pip")
 INTEGRATION_NAMES = ("can_set_default", "is_default", "snapshot_defaults",
-                     "set_default", "unsupported_reason")
+                     "set_default", "unsupported_reason", "launch_terminal")
 
 
 @pytest.mark.parametrize("plat", PLATFORMS)

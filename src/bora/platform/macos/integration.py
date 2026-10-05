@@ -11,3 +11,5 @@ from ..base import can_set_default, is_default, set_default, snapshot_defaults  
 
 def unsupported_reason() -> str:
     return "macOS 기본 재생기 설정은 아직 지원하지 않는다 — Finder 에서 정보 가져오기로 바꿀 수 있다"
+
+from ..base import launch_terminal  # noqa: F401

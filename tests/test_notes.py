@@ -159,3 +159,10 @@ def test_two_unrelated_stamps_are_not_a_range() -> None:
     """사이에 글자가 있으면 구간이 아니다."""
     stamps = parse_stamps("[00:01:00] 에서 본 것과 [00:02:00] 의 차이")
     assert not any(s.is_range for s in stamps)
+
+
+def test_empty_note_is_created_for_codex(tmp_path):
+    doc = NoteDocument(tmp_path / 'empty.md', '')
+    assert doc.save()
+    assert doc.path.read_text() == ''
+    assert not doc.save()

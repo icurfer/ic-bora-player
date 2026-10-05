@@ -29,7 +29,8 @@ libmpv 를 재생 엔진으로 쓰는 GTK 프론트엔드. 국내 자막(CP949 �
 | 자막 전처리기 | `src/bora/subtitle/` | 인코딩 2단 탐지 → SAMI 클래스 분리 → UTF-8 임시파일 → `--sub-file` 주입 |
 | 학습 도구 | `src/bora/notes/` · `state.py` | 마크다운 사이드카 메모, 핀·이어보기 |
 | 클립 | `src/bora/clip/` | 구간을 담아 ffmpeg 로 잘라내고 이어붙인다. **인코딩을 직접 구현하지 않는다** |
-| 선택 기능 | `src/bora/stt/` · `ai/` | 별도 venv · 별도 프로세스. 없어도 본체가 멀쩡해야 한다 |
+| 음성 인식 | `src/bora/stt/` | 선택 venv · 별도 프로세스. 없어도 본체가 멀쩡해야 한다 |
+| Codex 연동 | `src/bora/ai/` | 기본 포함 UI · 로컬 Codex 별도 프로세스. 메모 위/대화 아래 동시 표시 |
 | **플랫폼 분기** | `src/bora/platform/{linux,windows,macos,android}/` | 갈림길은 **전부 여기**. 본체에 `if windows` 를 흩지 않는다 |
 | 배포 | `scripts/build-deb.sh` → `dist/*.deb` | 26.04 검증 완료. Flatpak 은 22.04 대응과 함께 재검토 |
 | 배포 트리거 | `version` | 1줄. 코드가 바뀌면 patch bump |

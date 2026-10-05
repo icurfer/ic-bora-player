@@ -68,3 +68,7 @@ def venv_python_posix(venv: Path) -> Path:
 
 def venv_pip_posix(venv: Path) -> Path:
     return venv / "bin" / "pip"
+
+
+def launch_terminal(argv, cwd, env):
+    raise OSError('이 플랫폼의 Codex 터미널 연동은 아직 지원하지 않습니다.')

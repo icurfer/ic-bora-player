@@ -52,7 +52,7 @@ class NotePanel(Gtk.Box):
 
         self._view = Gtk.TextView(
             buffer=self._buffer, wrap_mode=Gtk.WrapMode.WORD_CHAR, monospace=False,
-            top_margin=10, bottom_margin=120, left_margin=10, right_margin=10,
+            top_margin=10, bottom_margin=24, left_margin=10, right_margin=10,
         )
         click = Gtk.GestureClick()
         click.connect("released", self._on_click)
@@ -82,10 +82,13 @@ class NotePanel(Gtk.Box):
         shot.connect("clicked", lambda *_: self.insert_screenshot())
         bar.append(shot)
 
-        self._ask_btn = Gtk.Button(icon_name="dialog-question-symbolic",
-                                   tooltip_text="이 줄을 물어보기 (Ctrl+Enter)")
+        self._ask_btn = Gtk.Button(label="Codex",
+                                   tooltip_text="Codex와 파일 작업 (Ctrl+Enter)")
         self._ask_btn.connect("clicked", lambda *_: self.ask_current_line())
         bar.append(self._ask_btn)
+        settings = Gtk.Button(icon_name="emblem-system-symbolic", tooltip_text="Codex 연결")
+        settings.connect("clicked", lambda *_: self.window.show_ai_settings())
+        bar.append(settings)
 
         bar.append(Gtk.Label(hexpand=True))
 
@@ -124,6 +127,42 @@ class NotePanel(Gtk.Box):
         self._buffer.place_cursor(self._buffer.get_end_iter())
         return True
 
+    def refresh_external(self):
+        if self.doc is None or not self.doc.changed_outside():
+            return
+        self.doc.text = self._text()
+        if self.doc.dirty:
+            self._update_status("외부 변경과 편집 중인 메모가 겹칩니다 — 자동 저장을 중지했습니다")
+            self._cancel_autosave()
+            return
+        try:
+            text = self.doc.path.read_text(encoding="utf-8")
+            document = NoteDocument(self.doc.path, text, self.doc.path.stat().st_mtime)
+        except (OSError, UnicodeError):
+            self._update_status("외부 메모를 읽지 못했습니다 — 현재 내용을 보존했습니다")
+            return
+        self.doc = document
+        self._loading = True
+        self._buffer.set_text(text)
+        self._loading = False
+        self._retag()
+        self._update_status("Codex 또는 외부 편집기의 변경을 반영했습니다")
+
+    def prepare_codex(self):
+        self.refresh_external()
+        if self.doc is None:
+            return False
+        if self.doc.changed_outside():
+            self.window.toast("메모의 외부 변경을 먼저 확인해 주세요")
+            return False
+        if not self.prepare_leave():
+            return False
+        if not self.doc.path.exists():
+            # 처음 생성된 제목도 실제 파일로 만들어 Codex에 넘긴다.
+            if not self.save():
+                return False
+        return True
+
     def prepare_leave(self) -> bool:
         """저장하지 못한 내용이 있으면 문서 전환·종료를 막는다."""
         self.save()
@@ -160,18 +199,61 @@ class NotePanel(Gtk.Box):
         start, end = self._buffer.get_bounds()
         return self._buffer.get_text(start, end, True)
 
+    def _show_conflict(self):
+        if getattr(self, "_conflict_dialog", None) is not None:
+            self._conflict_dialog.present()
+            return
+        dialog = Gtk.MessageDialog(transient_for=self.window, modal=True,
+                                   text="메모가 외부에서 바뀌었습니다",
+                                   secondary_text="현재 편집을 별도 메모 파일로 보관한 뒤 외부 변경을 불러올 수 있습니다. 원본을 덮어쓰지 않습니다.")
+        dialog.add_button("취소", Gtk.ResponseType.CANCEL)
+        dialog.add_button("내 편집 보관 후 새로고침", Gtk.ResponseType.ACCEPT)
+        dialog.set_default_response(Gtk.ResponseType.CANCEL)
+        self._conflict_dialog = dialog
+        document = self.doc
+        def response(_dialog, answer):
+            self._conflict_dialog = None
+            _dialog.destroy()
+            if answer != Gtk.ResponseType.ACCEPT or self.doc is not document:
+                return
+            self._preserve_and_reload()
+        dialog.connect("response", response)
+        dialog.present()
+
+    def _preserve_and_reload(self):
+        import os
+        import tempfile
+        try:
+            external = self.doc.path.read_text(encoding="utf-8")
+            fd, saved = tempfile.mkstemp(prefix=self.doc.path.stem + ".내편집-",
+                                         suffix=".md", dir=self.doc.path.parent)
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                stream.write(self._text())
+            document = NoteDocument(self.doc.path, external, self.doc.path.stat().st_mtime)
+        except (OSError, UnicodeError):
+            self.window.toast("편집을 보관하지 못했습니다. 현재 내용을 유지합니다.")
+            return False
+        self.doc = document
+        self._loading = True
+        self._buffer.set_text(external)
+        self._loading = False
+        self._retag()
+        self._update_status("외부 변경을 불러왔습니다")
+        self.window.toast(f"내 편집을 {Path(saved).name}에 보관했습니다")
+        return True
+
     def save(self, force: bool = False) -> bool:
         if self.doc is None:
             return False
         self._cancel_autosave()
         self.doc.text = self._text()
-        if not force and not self.doc.dirty:
+        if not force and not self.doc.dirty and self.doc.path.is_file():
             return False
         if self.doc.changed_outside():
-            # 밖에서 고친 것을 말없이 덮지 않는다.
-            self._update_status("파일이 밖에서 바뀌었다 — 저장 버튼을 눌러야 덮어쓴다")
-            if not force:
-                return False
+            self._update_status("외부 변경과 편집이 겹칩니다 — 저장 버튼으로 보존 방법을 확인하세요")
+            if force:
+                self._show_conflict()
+            return False
         try:
             saved = self.doc.save()
         except OSError as exc:
@@ -219,7 +301,7 @@ class NotePanel(Gtk.Box):
         self._buffer.place_cursor(self._buffer.get_end_iter())
         self._retag()
         # 패널이 닫혀 있으면 자동 저장 타이머가 돌 일이 없다. 바로 저장한다.
-        if not self.get_visible():
+        if not self.window._notes_open:
             self.save()
         else:
             self._schedule_autosave()
@@ -268,51 +350,13 @@ class NotePanel(Gtk.Box):
         return self._buffer.get_text(start, end, True).strip(), line
 
     def ask_current_line(self) -> bool:
-        """커서가 있는 줄을 질문으로 보낸다. 답은 그 아래 인용 블록으로 들어온다."""
-        if self._ask is not None and self._ask.running:
-            self.window.toast("이미 물어보는 중이다")
-            return False
-        ready, hint = ai_ready()
-        if not ready:
-            self.window.toast(hint.splitlines()[0])
-            log.info("AI 미준비: %s", hint.replace("\n", " / "))
-            return False
-
-        text, line = self._current_line_text()
-        question = text.lstrip("#> ").strip()       # 제목·인용 기호를 떼고 묻는다
+        """저장된 메모 폴더에서 Codex 터미널을 열고 현재 줄을 전달한다."""
+        text, _line = self._current_line_text()
+        question = text.lstrip("#> ").strip()
         if not question:
-            self.window.toast("물어볼 줄에 커서를 두어라")
+            self.window.toast("물어볼 줄에 커서를 두세요")
             return False
-
-        anchor = self._buffer.get_iter_at_line(line)[1]
-        if not anchor.ends_line():
-            anchor.forward_to_line_end()
-        offset = anchor.get_offset()
-        self._buffer.insert(anchor, "\n\n> \n\n")
-        self._answer_mark = self._buffer.create_mark(
-            None, self._buffer.get_iter_at_offset(offset + 4), False)
-        self._ask_generation += 1
-        generation = self._ask_generation
-
-        self._ask = AskRunner(
-            on_delta=lambda t: GLib.idle_add(self._dispatch_answer, generation, self._on_answer_delta, t),
-            on_done=lambda c, u: GLib.idle_add(self._dispatch_answer, generation, self._on_answer_done, c, u),
-            on_error=lambda m: GLib.idle_add(self._dispatch_answer, generation, self._on_answer_error, m),
-        )
-        job = Question(
-            text=question,
-            position=self.window.player.time_pos or 0.0,
-            video_title=self.window._current.stem if self.window._current else "",
-            subtitle_path=self.window._plan.source if self.window._plan else None,
-            note_text=self._text(),
-            note_line=line,
-            model=self.window.state.settings.ai_model,
-        )
-        if not self._ask.ask(job):
-            self._clear_answer()
-            return False
-        self._update_status("물어보는 중…")
-        return True
+        return self.window.open_codex_terminal(question)
 
     def _on_answer_delta(self, text: str) -> bool:
         # 줄바꿈마다 '> ' 를 붙여 인용 블록을 이어 간다.
@@ -321,11 +365,12 @@ class NotePanel(Gtk.Box):
                                 text.replace("\n", "\n> "))
         return False
 
-    def _on_answer_done(self, cost: float, usage: dict) -> bool:
+    def _on_answer_done(self, cost: float | None, usage: dict) -> bool:
         self._clear_answer()
         self._retag()
         cached = usage.get("cache_read") or 0
-        note = f"답변 완료 · 약 ${cost:.4f}"
+        note = (f"답변 완료 · 입력 {usage.get('input', 0):,} / 출력 {usage.get('output', 0):,}토큰"
+                if cost is None else f"답변 완료 · 약 ${cost:.4f}")
         if cached:
             note += f" (캐시 {cached:,}토큰 재사용)"
         self._update_status(note)

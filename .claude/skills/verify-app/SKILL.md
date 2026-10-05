@@ -49,7 +49,9 @@ done
 | 09 clip-export | C1~C6 잘라내기·이어붙이기 | — |
 | 10 keys-and-logging | 키 우선순위·메뉴 위치·로그·빈 창·종료 | — |
 | 11 timeline-edit | T1~T12 타임라인 컷 편집 | — |
-| 12 handover-regressions | 파일 전환·메모 충돌·AI 응답·외부 SRT·음성 안내 | — |
+| 12 handover-regressions | 파일 전환·메모 충돌·Codex 질문 전달·외부 SRT·음성 안내 | — |
+| 13 codex-chat | 메모 위/대화 아래 동시 표시·전송·중지·맥락·저장·테마 | — |
+| 14 workspace-notes | 기본 터미널 전달·외부 메모 반영·충돌 보관·파일 일치 | — |
 
 > ⚠ **시나리오는 반드시 설정을 격리한다** — `win.state = State(Path(tempfile.mkdtemp(...)))`.
 > 예전에 이걸 빠뜨려 검증용 임시 영상 12개가 **사용자의 최근 파일 목록에 쌓였다.**
