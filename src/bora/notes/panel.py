@@ -40,6 +40,8 @@ class NotePanel(Gtk.Box):
         self._loading = False
         self._last_line = -1
         self._ask: AskRunner | None = None
+        self._ask_generation = 0
+        self._answer_mark = None
 
         self.append(self._build_toolbar())
 
@@ -102,10 +104,17 @@ class NotePanel(Gtk.Box):
         return self._status
 
     # ── 문서 ─────────────────────────────────────────────────────────────
-    def load_for(self, video: Path, title: str = "") -> None:
+    def load_for(self, video: Path, title: str = "") -> bool:
         """영상이 바뀌면 부른다. 쓰던 메모는 먼저 저장한다."""
-        self.save()
-        self.doc = NoteDocument.load_for(video, title)
+        if not self.prepare_leave():
+            return False
+        try:
+            document = NoteDocument.load_for(video, title)
+        except (OSError, UnicodeError) as exc:
+            self.window.toast(f"메모를 열지 못했다: {exc}")
+            return False
+        self.cancel_ask()
+        self.doc = document
         self._loading = True
         self._buffer.set_text(self.doc.text)
         self._loading = False
@@ -113,6 +122,32 @@ class NotePanel(Gtk.Box):
         self._update_status("열림")
         # 이어 쓰기 좋게 끝으로 보낸다
         self._buffer.place_cursor(self._buffer.get_end_iter())
+        return True
+
+    def prepare_leave(self) -> bool:
+        """저장하지 못한 내용이 있으면 문서 전환·종료를 막는다."""
+        self.save()
+        if self.doc is not None and self.doc.dirty:
+            self.window.toast("메모를 저장하지 못했다 — 내용을 보존했다. 저장 문제를 해결한 뒤 다시 시도해라")
+            return False
+        return True
+
+    def cancel_ask(self) -> None:
+        self._ask_generation += 1
+        if self._ask is not None:
+            self._ask.cancel()
+        self._clear_answer()
+
+    def _clear_answer(self) -> None:
+        self._ask = None
+        if self._answer_mark is not None:
+            self._buffer.delete_mark(self._answer_mark)
+            self._answer_mark = None
+
+    def _dispatch_answer(self, generation, handler, *args) -> bool:
+        if generation == self._ask_generation:
+            handler(*args)
+        return False
 
     def _text(self) -> str:
         """버퍼의 **원본** 내용.
@@ -173,7 +208,8 @@ class NotePanel(Gtk.Box):
         if self.doc is None:
             if self.window._current is None:
                 return False
-            self.load_for(self.window._current, self.window._current.stem)
+            if not self.load_for(self.window._current, self.window._current.stem):
+                return False
         line = self.doc.pin_heading(start, end, label)
 
         end_iter = self._buffer.get_end_iter()
@@ -251,12 +287,17 @@ class NotePanel(Gtk.Box):
         anchor = self._buffer.get_iter_at_line(line)[1]
         if not anchor.ends_line():
             anchor.forward_to_line_end()
-        self._buffer.insert(anchor, "\n\n> ")
+        offset = anchor.get_offset()
+        self._buffer.insert(anchor, "\n\n> \n\n")
+        self._answer_mark = self._buffer.create_mark(
+            None, self._buffer.get_iter_at_offset(offset + 4), False)
+        self._ask_generation += 1
+        generation = self._ask_generation
 
         self._ask = AskRunner(
-            on_delta=lambda t: GLib.idle_add(self._on_answer_delta, t),
-            on_done=lambda c, u: GLib.idle_add(self._on_answer_done, c, u),
-            on_error=lambda m: GLib.idle_add(self._on_answer_error, m),
+            on_delta=lambda t: GLib.idle_add(self._dispatch_answer, generation, self._on_answer_delta, t),
+            on_done=lambda c, u: GLib.idle_add(self._dispatch_answer, generation, self._on_answer_done, c, u),
+            on_error=lambda m: GLib.idle_add(self._dispatch_answer, generation, self._on_answer_error, m),
         )
         job = Question(
             text=question,
@@ -268,19 +309,20 @@ class NotePanel(Gtk.Box):
             model=self.window.state.settings.ai_model,
         )
         if not self._ask.ask(job):
-            self._ask = None
+            self._clear_answer()
             return False
         self._update_status("물어보는 중…")
         return True
 
     def _on_answer_delta(self, text: str) -> bool:
         # 줄바꿈마다 '> ' 를 붙여 인용 블록을 이어 간다.
-        self._buffer.insert(self._buffer.get_end_iter(), text.replace("\n", "\n> "))
+        if self._answer_mark is not None:
+            self._buffer.insert(self._buffer.get_iter_at_mark(self._answer_mark),
+                                text.replace("\n", "\n> "))
         return False
 
     def _on_answer_done(self, cost: float, usage: dict) -> bool:
-        self._ask = None
-        self._buffer.insert(self._buffer.get_end_iter(), "\n\n")
+        self._clear_answer()
         self._retag()
         cached = usage.get("cache_read") or 0
         note = f"답변 완료 · 약 ${cost:.4f}"
@@ -292,7 +334,7 @@ class NotePanel(Gtk.Box):
         return False
 
     def _on_answer_error(self, message: str) -> bool:
-        self._ask = None
+        self._clear_answer()
         self._update_status(f"질의 실패: {message[:60]}")
         self.window.toast(f"AI: {message.splitlines()[0]}")
         return False

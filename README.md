@@ -56,13 +56,13 @@
 ### deb 로 설치 (권장)
 
 ```bash
-wget https://github.com/icurfer/ic-bora-player/raw/main/dist/bora_0.26.1_all.deb
-sudo apt install ./bora_0.26.1_all.deb
+wget https://github.com/icurfer/ic-bora-player/raw/main/dist/bora_0.26.2_all.deb
+sudo apt install ./bora_0.26.2_all.deb
 bora <영상파일>
 ```
 
-56 KB. 의존성은 `python3-gi` · `gir1.2-gtk-4.0` · `gir1.2-adw-1` · `python3-mpv` 네 개이고
-apt 가 알아서 받는다(`python3-mpv` 가 libmpv 를 끌고 온다).
+의존성은 `python3-gi` · `python3-gi-cairo` · `gir1.2-gtk-4.0` · `gir1.2-adw-1` ·
+`python3-mpv` · `ffmpeg`이며 apt 가 알아서 받는다(`python3-mpv` 가 libmpv 를 끌고 온다).
 
 > ⚠ **Ubuntu 26.04 에서만 검증했다.** 22.04·24.04 는 libadwaita 1.1 범위로 코드를 짰지만
 > 실제로 돌려 보지 않았다(기획서 v0.1 §8-5). 그 버전에서 문제가 나면 알려 주면 좋겠다.
@@ -82,10 +82,18 @@ bash scripts/install-desktop.sh      # 앱 목록에만 등록(개발용, --remo
 없어도 재생·자막·메모는 그대로 동작한다.
 
 ```bash
-bash scripts/install-stt.sh      # 음성 텍스트 추출 (faster-whisper, 약 436 MB)
-bash scripts/install-ai.sh       # AI 질의 (anthropic SDK)
+# deb 설치본
+bash /usr/share/doc/bora/install-stt.sh   # 음성 텍스트 추출
+bash /usr/share/doc/bora/install-ai.sh    # AI 질의
+# 소스에서는 위 두 스크립트를 scripts/ 아래에서 실행한다.
 export ANTHROPIC_API_KEY=sk-ant-...   # AI 질의용. 앱은 키를 저장하지 않는다
 ```
+
+선택 기능의 기본 설치 위치는 `${XDG_DATA_HOME:-~/.local/share}/bora`다.
+개발용으로 저장소 안에 설치하려면 `--dev`를 붙인다. 기존 저장소 venv는 계속 인식하며,
+없는 경우 사용자 설치 위치를 찾는다. 제거는 설치할 때와 같은 옵션에 `--remove`를 추가한다.
+
+음성 전용 파일은 화면에 영상 트랙이 없다는 안내를 표시한다.
 
 ## 단축키
 

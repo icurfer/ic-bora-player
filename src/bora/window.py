@@ -54,6 +54,7 @@ class BoraWindow(Adw.ApplicationWindow):
         self._seeking = False          # 사용자가 슬라이더를 잡고 있는 동안은 갱신하지 않는다
         self._plan: Plan | None = None
         self._current: Path | None = None
+        self._media_generation = 0
         self._cache_base = Path(GLib.get_user_cache_dir()) / "bora"
         self._track_buttons: list[Gtk.CheckButton] = []
         self._hide_ui_id = 0            # 전체화면에서 UI 를 감출 타이머
@@ -100,6 +101,16 @@ class BoraWindow(Adw.ApplicationWindow):
         self._video_stack = Gtk.Overlay()
         self._video_stack.set_child(self._video)
         self._video_stack.add_overlay(self._blackout)
+        self._media_hint = Gtk.Label(
+            label="", visible=False, can_target=False, wrap=True,
+            halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER,
+            margin_start=24, margin_end=24)
+        hint_style = Gtk.CssProvider()
+        hint_style.load_from_data(
+            b"label { color: white; background: rgba(0,0,0,0.85); padding: 20px; border-radius: 12px; }")
+        self._media_hint.get_style_context().add_provider(
+            hint_style, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        self._video_stack.add_overlay(self._media_hint)
 
         # 영상 | 메모. 메모를 접으면 영상이 전부 차지한다.
         self._paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL,
@@ -694,7 +705,8 @@ class BoraWindow(Adw.ApplicationWindow):
         self._notes.set_visible(want)
         if want:
             if self._notes.doc is None or self._notes.doc.path != NoteDocument.path_for(self._current):
-                self._notes.load_for(self._current, self._current.stem)
+                if not self._notes.load_for(self._current, self._current.stem):
+                    return
             self._notes.set_visible(True)
             # 처음 열 때 절반쯤 차지하게 둔다
             if self._paned.get_position() <= 0:
@@ -870,9 +882,12 @@ class BoraWindow(Adw.ApplicationWindow):
         output = self._current.with_suffix(f".{lang or 'auto'}.srt")
 
         self._stt = ExtractRunner(
-            on_progress=lambda *a: GLib.idle_add(self._on_extract_progress, *a),
-            on_done=lambda *a: GLib.idle_add(self._on_extract_done, *a),
-            on_error=lambda m: GLib.idle_add(self._on_extract_error, m),
+            on_progress=lambda *a, gen=self._media_generation: GLib.idle_add(
+                self._for_media, gen, self._on_extract_progress, *a),
+            on_done=lambda *a, gen=self._media_generation: GLib.idle_add(
+                self._for_media, gen, self._on_extract_done, *a),
+            on_error=lambda m, gen=self._media_generation: GLib.idle_add(
+                self._for_media, gen, self._on_extract_error, m),
         )
         if not self._stt.start(Extraction(self._current, output, model, lang)):
             self._stt = None
@@ -1031,7 +1046,7 @@ class BoraWindow(Adw.ApplicationWindow):
         self._sync_edit_bar()
         self.toast("편집: S 자르기 · Delete 지우기 · Ctrl+Z 되돌리기")
 
-    def _confirm_discard_edit(self) -> bool:
+    def _confirm_discard_edit(self, action: str = "접으려면", target: str = "close-edit") -> bool:
         """편집 중이면 한 번 묻는다. 지금은 토스트로 알리고 접지 않는다.
 
         v0.4 와 달리 작업이 길어질 수 있어 말없이 버리면 안 된다(기획서 v0.5 §4-2).
@@ -1039,11 +1054,11 @@ class BoraWindow(Adw.ApplicationWindow):
         model = self._timeline.model
         if model is None or not model.dirty:
             return True
-        if getattr(self, "_edit_close_asked", False):
-            self._edit_close_asked = False
+        if getattr(self, "_edit_close_asked", None) == target:
+            self._edit_close_asked = None
             return True
-        self._edit_close_asked = True
-        self.toast("편집한 내용이 사라진다 — 접으려면 한 번 더 누르고, 남기려면 내보내라")
+        self._edit_close_asked = target
+        self.toast(f"편집한 내용이 사라진다 — {action} 한 번 더 시도하고, 남기려면 내보내라")
         return False
 
     def split_clip(self) -> None:
@@ -1106,6 +1121,7 @@ class BoraWindow(Adw.ApplicationWindow):
             self._blackout.set_visible(want)
 
     def _on_timeline_changed(self) -> None:
+        self._edit_close_asked = None
         self._sync_edit_bar()
         # 지금 있는 자리가 방금 지워졌을 수도 있다 — 덮개를 바로 맞춘다.
         position = self.player.time_pos
@@ -1425,6 +1441,7 @@ class BoraWindow(Adw.ApplicationWindow):
         if not button.get_active():
             return
         self.state.settings.log_level = logmod.set_level(name)
+        self.player.set_log_level(name)
         self.state.save()
         self.toast(f"로그: {dict((l[0], l[1]) for l in logmod.LEVELS)[name]}")
 
@@ -1610,6 +1627,7 @@ class BoraWindow(Adw.ApplicationWindow):
         # (그래야 `--debug` 로 띄운 세션이 설정 때문에 조용해지지 않는다).
         if st.log_level:
             logmod.set_level(st.log_level)
+        self.player.set_log_level(logmod.level_name())
         if st.log_to_file and not logmod.log_file_path():
             logmod.add_log_file(str(self._log_file_target()))
         self.player.speed = st.speed
@@ -1638,41 +1656,90 @@ class BoraWindow(Adw.ApplicationWindow):
         self._last_toast_title = title
         toast = Adw.Toast(title=title, timeout=8)
         toast.set_button_label("이어보기")
-        toast.connect("button-clicked", lambda *_: self.player.seek_absolute(position))
+        generation = self._media_generation
+        toast.connect("button-clicked", lambda *_: self._for_media(
+            generation, self.player.seek_absolute, position))
+        self._resume_toast = toast
         self._toasts.add_toast(toast)
 
     # ── 동작 ─────────────────────────────────────────────────────────────
+    def _for_media(self, generation, callback, *args) -> bool:
+        if self.player.alive and generation == self._media_generation:
+            callback(*args)
+        return False
+
+    def _after_media(self, delay, callback, *args) -> None:
+        GLib.timeout_add(delay, self._for_media, self._media_generation, callback, *args)
+
     def open_path(self, path: Path | str, subtitle: Path | None = None) -> None:
         path = Path(path)
+        if not path.is_file():
+            self.toast(f"파일을 열 수 없다: {path.name}")
+            return
+        if self._clip_window is not None and self._clip_window.runner.running:
+            self.toast("내보내기를 끝내거나 취소한 뒤 파일을 바꿔라")
+            return
+        if self._editor is not None and self._editor.doc.dirty:
+            self.toast("편집 중인 자막을 저장한 뒤 파일을 바꿔라")
+            self._editor.present()
+            return
+        if not self._notes.prepare_leave():
+            self.toggle_notes(True)
+            return
+        if not self._confirm_discard_edit("파일을 바꾸려면 같은 파일로", str(path.resolve())):
+            return
+        if self._notes.doc is not None or self._notes_open:
+            if not self._notes.load_for(path, path.stem):
+                return
         self._remember_position()          # 넘어가기 전에 지금 파일 위치를 남긴다
+        self._media_generation += 1
+        self._notes.cancel_ask()
+        if self._stt is not None:
+            self._stt.cancel()
+            self._stt = None
+            self._stt_bar = None
+        if self._resume_toast is not None:
+            self._resume_toast.dismiss()
+            self._resume_toast = None
+        self._edit_revealer.set_reveal_child(False)
+        self._preview_btn.set_active(False)
+        self._timeline.unload()
+        self._blackout.set_visible(False)
+        self._media_hint.set_visible(False)
+        self._edit_close_asked = None
+        self._clips.clear()
+        if self._clip_window is not None:
+            self._clip_window.close()
+            self._clip_window = None
+        if self._editor is not None:
+            self._editor.close()
+            self._editor = None
         try:
             self._plan = prepare_for_video(path, self._cache_base, subtitle)
         except Exception as exc:                    # 자막 준비 실패가 재생을 막으면 안 된다
             self._plan = None
             log.exception("자막 준비 실패: %s", path)
             self.toast(f"자막을 읽지 못했다: {exc}")
-        if self._notes_open:
-            self._notes.save()
         self.player.clear_loop()        # 다른 영상에 앞 파일의 구간이 남으면 안 된다
         self.player.open(path, self._plan)
         self._current = path
-        if self._notes_open:
-            self._notes.load_for(path, path.stem)
         self._title.set_title(path.name)
         self._title.set_subtitle(str(path.parent))
         self._sync_controls_enabled()
         self._sync_play_button()
         # 트랙 주입 직후에는 track_list 가 아직 안 채워져 있을 수 있다. 한 박자 뒤에 그린다.
-        GLib.timeout_add(300, self._refresh_subtitle_menu_once)
+        self._after_media(300, self._refresh_subtitle_menu_once)
         if self._plan is not None:
             self.toast(f"자막: {self._plan.summary()}")
         else:
             # 자막이 없는 강의는 메모·검색·질의가 반쪽이 된다. 만들 수 있다고 알려 준다.
-            GLib.timeout_add_seconds(2, lambda: (self._offer_extract(), False)[1])
+            self._after_media(2000, self._offer_extract)
         # 길이를 알아야 이어볼지 판단할 수 있다. 파일이 열린 뒤에 묻는다.
-        GLib.timeout_add(600, lambda: (self._offer_resume(path), False)[1])
+        self._after_media(600, self._offer_resume, path)
 
     def _refresh_subtitle_menu_once(self) -> bool:
+        if not self.player.alive:
+            return False
         self._rebuild_subtitle_menu()
         self._rebuild_audio_menu()
         return False
@@ -1740,6 +1807,13 @@ class BoraWindow(Adw.ApplicationWindow):
             return False            # 엔진이 닫혔다 — 타이머도 여기서 끝낸다
         duration = self.player.duration
         pos = self.player.time_pos
+        message = self._video.error
+        if not message and self._current is not None and self.player.audio_only:
+            message = "음성 전용 파일을 재생하고 있습니다\n이 파일에는 영상 트랙이 없습니다"
+        if message != self._media_hint.get_label():
+            self._media_hint.set_label(message)
+        if bool(message) != self._media_hint.get_visible():
+            self._media_hint.set_visible(bool(message))
         if duration:
             self._seek.set_range(0, duration)
             self._dur_label.set_label(_fmt_time(duration))
@@ -1764,17 +1838,35 @@ class BoraWindow(Adw.ApplicationWindow):
         return True
 
     def _on_close(self, *_args) -> bool:
+        if self._editor is not None and self._editor.doc.dirty:
+            self.toast("편집 중인 자막을 저장하거나 편집 창을 닫은 뒤 종료해라")
+            self._editor.present()
+            return True
+        if self._clip_window is not None and self._clip_window.runner.running:
+            self.toast("내보내기를 끝내거나 취소한 뒤 종료해라")
+            return True
+        if not self._notes.prepare_leave():
+            self.toggle_notes(True)
+            return True
+        if not self._confirm_discard_edit("종료하려면", "close-window"):
+            return True
+        self._media_generation += 1
+        self._notes.cancel_ask()
         # ⚠ 타이머를 **먼저** 뗀다. 남겨 두면 player.close() 뒤에 한 박자 더 돌아
         #   죽은 mpv 코어를 건드리고 ShutdownError 로 크래시 리포터까지 뜬다.
-        for name in ("_tick_id", "_remember_id"):
+        for name in ("_tick_id", "_remember_id", "_hide_ui_id"):
             source = getattr(self, name, 0)
             if source:
                 GLib.source_remove(source)
                 setattr(self, name, 0)
-        self._timeline.unfollow()       # 프레임 콜백도 player 를 읽는다
+        self._timeline.unload()       # 프레임 콜백·썸네일 작업도 정리한다
         if self._stt is not None:
             self._stt.cancel()
         self._notes.save()
+        if self._editor is not None:
+            self._editor.close()
+        if self._clip_window is not None:
+            self._clip_window.close()
         self._remember_position()
         self.state.settings.speed = self.player.speed
         self.state.settings.volume = self.player.volume

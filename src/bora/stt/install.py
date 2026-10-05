@@ -29,7 +29,10 @@ def repo_root() -> Path:
 
 
 def venv_dir() -> Path:
-    return repo_root() / STT_VENV
+    local = repo_root() / STT_VENV
+    if platform_paths.venv_python(local).is_file():
+        return local
+    return platform_paths.data_dir() / STT_VENV
 
 
 def venv_python() -> Path:
@@ -52,7 +55,8 @@ def is_installed() -> bool:
 
 
 def install_hint() -> str:
-    return f"bash scripts/install-stt.sh   ({STT_VENV} 에 faster-whisper 를 넣는다)"
+    return ("deb: bash /usr/share/doc/bora/install-stt.sh\n"
+            f"소스: bash scripts/install-stt.sh   ({STT_VENV} 에 faster-whisper 를 넣는다)")
 
 
 def ensure_ready() -> tuple[bool, str]:

@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
+import re
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -24,6 +26,34 @@ log = get_logger("state")
 
 SCHEMA = 1
 MAX_RECENT = 20
+_SETTING_RANGES = {"speed": (0.25, 4), "volume": (0, 130),
+                   "sub_font_size": (0, 200), "sub_pos": (0, 150)}
+
+
+def _number(value) -> bool:
+    try:
+        return type(value) in (int, float) and math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def _valid_setting(key, value, default) -> bool:
+    if isinstance(default, bool):
+        return type(value) is bool
+    if key in _SETTING_RANGES:
+        lo, hi = _SETTING_RANGES[key]
+        return (_number(value) and lo <= value <= hi
+                and (key != "sub_font_size" or type(value) is int))
+    if isinstance(default, str):
+        if not isinstance(value, str):
+            return False
+        if key == "sub_color":
+            return not value or bool(re.fullmatch(r"#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?", value))
+        if key == "log_level":
+            return value in ("", "warning", "info", "debug")
+        return True
+    return (isinstance(value, dict)
+            and all(isinstance(k, str) and isinstance(v, str) for k, v in value.items()))
 # 이 비율을 넘겨 봤으면 '다 본 것'으로 치고 이어보기를 묻지 않는다.
 WATCHED_RATIO = 0.95
 # 너무 앞이면 이어볼 의미가 없다.
@@ -117,6 +147,11 @@ class State:
             return
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict):
+                raise ValueError("설정 최상위는 객체여야 한다")
+            for name in ("settings", "recent"):
+                if name in raw and not isinstance(raw[name], dict):
+                    raise ValueError(f"{name}은 객체여야 한다")
         except (OSError, ValueError) as exc:
             # 깨진 설정 때문에 앱이 안 뜨면 안 된다. 치워 두고 기본값으로 간다.
             log.warning("설정을 읽지 못했다(%s). 기본값으로 시작한다.", exc)
@@ -128,14 +163,34 @@ class State:
 
         known = {f for f in Settings.__dataclass_fields__}
         for key, value in (raw.get("settings") or {}).items():
-            if key in known:
+            if key in known and _valid_setting(key, value, getattr(self.settings, key)):
                 setattr(self.settings, key, value)
 
         for key, item in (raw.get("recent") or {}).items():
             try:
-                self.recent[key] = RecentItem(**item)
+                record = RecentItem(**item)
+                if not all(isinstance(getattr(record, name), str)
+                           for name in ("path", "title", "sub_track")):
+                    continue
+                if (not all(_number(getattr(record, name)) and getattr(record, name) >= 0
+                            for name in ("position", "duration", "updated"))
+                        or type(record.finished) is not bool or not isinstance(record.pins, list)):
+                    continue
+                pins = []
+                for raw_pin in record.pins:
+                    try:
+                        pin = Pin(**raw_pin)
+                        if (_number(pin.start) and pin.start >= 0
+                                and (pin.end is None or (_number(pin.end) and pin.end >= pin.start))
+                                and isinstance(pin.label, str) and _number(pin.created)):
+                            pins.append(asdict(pin))
+                    except TypeError:
+                        continue
+                record.pins = pins
+                self.recent[key] = record
             except TypeError:
                 continue        # 형식이 바뀐 항목은 조용히 버린다
+        self._trim()
         log.debug("설정 로드: 최근 %d개", len(self.recent))
 
     def save(self) -> None:

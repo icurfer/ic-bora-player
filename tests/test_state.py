@@ -115,3 +115,40 @@ def test_save_leaves_no_temp_file(tmp_path: Path) -> None:
     state.save()
     assert not list((tmp_path / "cfg").glob("*.tmp"))
     assert json.loads((tmp_path / "cfg" / "state.json").read_text(encoding="utf-8"))["schema"] == 1
+
+
+def test_valid_json_with_wrong_structure_is_recovered(tmp_path):
+    for raw in ([], None, {'settings': []}, {'recent': 'wrong'}):
+        (tmp_path / 'state.json').write_text(json.dumps(raw))
+        state = State(tmp_path)
+        assert state.settings.speed == 1
+        assert state.recent == {}
+        assert (tmp_path / 'state.json.broken').exists()
+
+
+def test_settings_values_are_validated(tmp_path):
+    (tmp_path / 'state.json').write_text(json.dumps({'settings': {
+        'speed': 'fast', 'volume': float('nan'), 'sub_font_size': -1,
+        'sub_pos': 999, 'sub_color': 'bad color', 'log_level': 'trace',
+        'remember_position': 'false', 'previous_defaults': [],
+    }}))
+    state = State(tmp_path)
+    assert state.settings.speed == 1
+    assert state.settings.volume == 100
+    assert state.settings.sub_font_size == 0
+    assert state.settings.sub_pos == 100
+    assert state.settings.sub_color == ''
+    assert state.settings.log_level == ''
+    assert state.settings.remember_position is True
+    assert state.settings.previous_defaults == {}
+
+
+def test_corrupt_recent_records_and_pins_are_skipped(tmp_path):
+    (tmp_path / 'state.json').write_text(json.dumps({'recent': {
+        'bad': {'path': 2}, 'bad2': {'path': 'x', 'position': 'soon'},
+        'good': {'path': 'x', 'pins': [None, {'start': 'bad'}, {'start': 2}]},
+    }}))
+    state = State(tmp_path)
+    assert list(state.recent) == ['good']
+    assert state.recent['good'].pins[0]['start'] == 2
+    assert len(state.recent['good'].pins) == 1

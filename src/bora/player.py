@@ -58,12 +58,8 @@ class Player:
             osc=False,              # 자체 OSD 컨트롤을 쓰지 않는다. UI 는 우리가 그린다
             input_default_bindings=False,
         )
-        if debug:
-            # libmpv 로그를 파이썬 로거로 끌어온다 — 자막이 왜 저렇게 나오는지는
-            # mpv 가 무엇을 열고 어떤 코드페이지를 썼는지 봐야 안다.
-            options.update(log_handler=mpv_log_handler, loglevel="v")
-        else:
-            options.update(really_quiet=True)
+        # 일반 실행에서도 콜백을 연결해야 메뉴에서 등급을 올린 즉시 진단할 수 있다.
+        options.update(log_handler=mpv_log_handler, loglevel="v" if debug else "warn")
         self._mpv = mpv.MPV(**options)
         log.debug("libmpv %s 시작 (debug=%s)", self._mpv.mpv_version, debug)
         self._ctx: mpv.MpvRenderContext | None = None
@@ -93,6 +89,15 @@ class Player:
         self._ctx.render(flip_y=True, opengl_fbo={"w": width, "h": height, "fbo": fbo})
 
     # ── 재생 ─────────────────────────────────────────────────────────────
+    def set_log_level(self, name: str) -> None:
+        self._mpv.set_loglevel({"debug": "v", "info": "info"}.get(name, "warn"))
+
+    @property
+    def audio_only(self) -> bool:
+        tracks = self._mpv.track_list or []
+        return (any(t.get("type") == "audio" for t in tracks)
+                and not any(t.get("type") == "video" for t in tracks))
+
     def open(self, path: Path | str, plan=None) -> None:
         """영상을 연다. plan 이 있으면 자막 설정을 함께 적용한다.
 
@@ -100,6 +105,7 @@ class Player:
         분리 트랙 주입(sub-add)은 파일이 열린 **뒤**여야 한다.
         """
         if plan is None:
+            self._mpv.sub_files = []
             self._mpv.sub_auto = "fuzzy"
             self._mpv.sub_codepage = "auto"
             self._mpv.sub_stretch_durations = False
@@ -107,6 +113,7 @@ class Player:
         else:
             # 분리 트랙을 쓸 때는 원본 자막이 자동으로 붙지 않게 막는다(중복 트랙 방지).
             self._mpv.sub_auto = "no" if plan.split else "fuzzy"
+            self._mpv.sub_files = [] if plan.split else [str(plan.source)]
             self._mpv.sub_codepage = plan.codepage or "auto"
             self._mpv.sub_stretch_durations = bool(plan.fallback_stretch)
             self._set_sub_filters(plan.sub_filters)

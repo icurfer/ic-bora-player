@@ -13,6 +13,9 @@ from gi.repository import GLib, Gtk  # noqa: E402
 
 from .player import Player  # noqa: E402
 from .platform import gl as platform_gl  # noqa: E402
+from .log import get as get_logger  # noqa: E402
+
+log = get_logger("glarea")
 
 
 class MpvGLArea(Gtk.GLArea):
@@ -20,6 +23,7 @@ class MpvGLArea(Gtk.GLArea):
         super().__init__(hexpand=True, vexpand=True)
         self._player = player
         self._ready = False
+        self.error = ""
         self.set_auto_render(False)
         self.connect("realize", self._on_realize)
         self.connect("render", self._on_render)
@@ -28,9 +32,15 @@ class MpvGLArea(Gtk.GLArea):
 
     def _on_realize(self, area: Gtk.GLArea) -> None:
         area.make_current()
-        if area.get_error() is not None:
+        try:
+            if area.get_error() is not None:
+                raise RuntimeError(str(area.get_error()))
+            self._player.attach_render_context(self._request_render)
+        except Exception as exc:
+            self.error = f"영상 출력을 시작하지 못했다: {exc}"
+            log.exception(self.error)
             return
-        self._player.attach_render_context(self._request_render)
+        self.error = ""
         self._ready = True
 
     def _request_render(self) -> None:

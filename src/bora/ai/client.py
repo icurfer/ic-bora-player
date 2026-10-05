@@ -30,7 +30,10 @@ def repo_root() -> Path:
 
 
 def venv_python() -> Path:
-    return platform_paths.venv_python(repo_root() / ".venv")
+    local = platform_paths.venv_python(repo_root() / ".venv")
+    if local.is_file():
+        return local
+    return platform_paths.venv_python(platform_paths.data_dir() / ".venv")
 
 
 def sdk_installed() -> bool:
@@ -55,7 +58,9 @@ def has_credentials() -> bool:
 
 def ensure_ready() -> tuple[bool, str]:
     if not sdk_installed():
-        return False, "AI 질의가 설치되지 않았다.\nbash scripts/install-ai.sh"
+        return False, ("AI 질의가 설치되지 않았다.\n"
+                       "deb: bash /usr/share/doc/bora/install-ai.sh\n"
+                       "소스: bash scripts/install-ai.sh")
     if not has_credentials():
         return False, ("API 키가 없다. 앱은 키를 저장하지 않는다 — 둘 중 하나를 쓴다:\n"
                        "  export ANTHROPIC_API_KEY=sk-ant-...\n"

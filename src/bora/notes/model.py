@@ -114,6 +114,7 @@ class NoteDocument:
                 return doc
             except OSError as exc:
                 log.warning("메모를 읽지 못했다 %s: %s", path, exc)
+                raise
         # 처음 여는 영상이면 제목 한 줄로 시작한다. 빈 화면보다 쓰기 시작하기 쉽다.
         heading = f"# {title or Path(video).stem}\n\n"
         return cls(path, heading)

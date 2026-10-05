@@ -52,6 +52,7 @@ chmod 755 "$ROOT/usr/bin/bora"
 
 install -m 644 README.md "$ROOT/usr/share/doc/$PKG/"
 install -m 644 CHANGELOG.md "$ROOT/usr/share/doc/$PKG/"
+install -m 644 scripts/install-ai.sh scripts/install-stt.sh "$ROOT/usr/share/doc/$PKG/"
 
 INSTALLED_KB="$(du -sk "$ROOT" | cut -f1)"
 

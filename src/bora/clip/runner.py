@@ -15,6 +15,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -84,7 +85,7 @@ class ExportRunner:
         if not job.clips:
             self._fail("담은 클립이 없다")
             return False
-        problem = self._check_space(job)
+        problem = self._check_targets(job) or self._check_space(job)
         if problem:
             self._fail(problem)
             return False
@@ -102,11 +103,40 @@ class ExportRunner:
             proc.terminate()
 
     # ── 내부 ─────────────────────────────────────────────────────────────
+    @staticmethod
+    def _targets(job: ExportJob) -> list[Path]:
+        if job.join and len(job.clips) > 1:
+            return [job.output]
+        suffix = job.output.suffix or ".mkv"
+        return [job.output.with_name(
+            f"{job.output.stem}{suffix}" if len(job.clips) == 1
+            else f"{job.output.stem}-{i}{suffix}")
+            for i in range(1, len(job.clips) + 1)]
+
+    def _check_targets(self, job: ExportJob) -> str | None:
+        for target in self._targets(job):
+            try:
+                if (target.resolve() == job.source.resolve()
+                        or (target.exists() and target.samefile(job.source))):
+                    return "원본 파일에는 내보낼 수 없다 — 다른 이름을 골라라"
+            except OSError as exc:
+                return f"저장 경로를 확인하지 못했다: {exc}"
+        return None
+
+    def _temp(self, job: ExportJob, suffix: str) -> Path:
+        fd, name = tempfile.mkstemp(prefix=".bora-clip-", suffix=suffix,
+                                    dir=job.output.parent)
+        os.close(fd)
+        path = Path(name)
+        self._temps.append(path)
+        return path
+
     def _check_space(self, job: ExportJob) -> str | None:
         """원본 비트레이트로 결과 크기를 어림잡아 디스크를 확인한다."""
         try:
             source_size = job.source.stat().st_size
-            source_length = max(1.0, probe(job.source).duration if probe(job.source) else 1.0)
+            info = probe(job.source)
+            source_length = max(1.0, info.duration if info else 1.0)
             need = source_size / source_length * job.total_duration * SPACE_MARGIN
             free = shutil.disk_usage(job.output.parent).free
         except (OSError, AttributeError) as exc:
@@ -142,9 +172,7 @@ class ExportRunner:
             if self._cancelled:
                 self._fail("취소됨")
                 return None
-            temp = job.output.with_name(
-                f".bora-clip-{os.getpid()}-{index}{suffix}")
-            self._temps.append(temp)
+            temp = self._temp(job, suffix)
             step = f"{index}/{len(job.clips)} 잘라내는 중"
             ok = self._ffmpeg(
                 self._cut_command(job, clip, temp),
@@ -178,27 +206,36 @@ class ExportRunner:
             self._fail(f"조각을 이어붙일 수 없다 — {reason}. "
                        f"'정확히' 모드로 다시 내보내면 형식이 통일된다")
             return None
-        listing = job.output.with_name(f".bora-clip-{os.getpid()}.txt")
-        self._temps.append(listing)
+        listing = self._temp(job, ".txt")
+        # 고유 임시 이름만 적는다. 폴더의 따옴표·역슬래시·줄바꿈이 concat 문법에 섞이지 않는다.
         listing.write_text(
-            "".join(f"file '{p}'\n" for p in pieces), encoding="utf-8")
+            "".join(f"file '{p.name}'\n" for p in pieces), encoding="utf-8")
+        joined = self._temp(job, job.output.suffix or ".mkv")
         ok = self._ffmpeg(
             ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
              "-f", "concat", "-safe", "0", "-i", str(listing),
-             "-c", "copy", "-progress", "pipe:1", str(job.output)],
+             "-c", "copy", "-progress", "pipe:1", str(joined)],
             base=0.0, total=job.total_duration, step="이어붙이는 중")
         if not ok:
             return None
+        if not self._can_place(job):
+            return None
+        joined.replace(job.output)
         return ExportResult(paths=[job.output])
+
+    def _can_place(self, job: ExportJob) -> bool:
+        problem = "취소됨" if self._cancelled else self._check_targets(job)
+        if problem:
+            self._fail(problem)
+            return False
+        return True
 
     def _place(self, job: ExportJob, pieces: list[Path]) -> ExportResult | None:
         """조각별 저장 — 임시 조각을 목적지 이름으로 옮긴다."""
-        stem, suffix = job.output.stem, job.output.suffix or ".mkv"
+        if not self._can_place(job):
+            return None
         out: list[Path] = []
-        for index, piece in enumerate(pieces, start=1):
-            name = f"{stem}{suffix}" if len(pieces) == 1 else f"{stem}-{index}{suffix}"
-            target = job.output.with_name(name)
-            target.unlink(missing_ok=True)
+        for piece, target in zip(pieces, self._targets(job)):
             piece.replace(target)                   # 같은 디렉터리라 rename 으로 끝난다
             out.append(target)
         self._temps = [t for t in self._temps if t.exists()]
@@ -206,15 +243,25 @@ class ExportRunner:
 
     def _ffmpeg(self, command: list[str], *, base: float, total: float,
                 step: str) -> bool:
+        if self._cancelled:
+            self._fail("취소됨")
+            return False
+        # stderr 파이프가 가득 차 stdout을 기다리는 스레드와 교착하지 않게 한다.
+        with tempfile.TemporaryFile(mode="w+t") as errors:
+            return self._run_ffmpeg(command, base, total, step, errors)
+
+    def _run_ffmpeg(self, command, base, total, step, errors) -> bool:
         log.info("%s: %s", step, " ".join(command[:9]))
         try:
             self._proc = subprocess.Popen(
-                command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                command, stdout=subprocess.PIPE, stderr=errors,
                 text=True, bufsize=1)
         except OSError as exc:
             self._fail(f"ffmpeg 를 띄우지 못했다: {exc}")
             return False
         proc = self._proc
+        if self._cancelled:
+            proc.terminate()
         assert proc.stdout is not None
         for line in proc.stdout:
             found = _OUT_TIME.match(line.strip())
@@ -222,11 +269,13 @@ class ExportRunner:
                 seconds = int(found.group(1)) / 1_000_000
                 self.on_progress(min(base + seconds, total), total, step)
         code = proc.wait()
+        proc.stdout.close()
         if self._cancelled:
             self._fail("취소됨")
             return False
         if code != 0:
-            tail = (proc.stderr.read() or "").strip()[-300:] if proc.stderr else ""
+            errors.seek(0)
+            tail = errors.read().strip()[-300:]
             self._fail(f"ffmpeg 실패 (코드 {code}) {tail}")
             return False
         if self.on_progress:
