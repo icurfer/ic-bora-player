@@ -14,6 +14,7 @@ from gi.repository import Gdk, GLib, Gtk, Pango
 
 from .client import AskRunner, check_connection, ensure_ready
 from .context import Question
+from .api import AIError, APIAskRunner, load_config, check_api, get_key
 from .history import Conversation
 from ..notes.model import format_stamp
 
@@ -41,14 +42,14 @@ class ChatPanel(Gtk.Box):
         self._checking = False
 
         header = Gtk.Box(spacing=6)
-        title = Gtk.Label(label="Codex 대화", xalign=0, hexpand=True)
+        title = Gtk.Label(label="AI 대화", xalign=0, hexpand=True)
         title.add_css_class("heading")
         header.append(title)
-        self._help = Gtk.Button(label="로그인·연결", tooltip_text="Codex 로그인·연결 설정")
+        self._help = Gtk.Button(label="연결 설정", tooltip_text="AI 연결 방식·로그인·API 키 설정")
         self._help.connect("clicked", lambda *_: self.window.show_ai_settings())
         header.append(self._help)
         self.connection_button = Gtk.Button(icon_name="network-transmit-receive-symbolic",
-                                           tooltip_text="Codex 연결 확인")
+                                           tooltip_text="선택한 AI 연결 확인")
         self.connection_button.connect("clicked", self._check_connection)
         header.append(self.connection_button)
         self.new_button = Gtk.Button(icon_name="document-new-symbolic", tooltip_text="새 대화")
@@ -74,7 +75,7 @@ class ChatPanel(Gtk.Box):
         self._input = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR,
                                    top_margin=6, bottom_margin=6, left_margin=6, right_margin=6)
         self._input.set_tooltip_text("질문 입력 · Enter 줄바꿈 · Ctrl+Enter 보내기")
-        self._input.update_property([Gtk.AccessibleProperty.LABEL], ["Codex에게 질문"])
+        self._input.update_property([Gtk.AccessibleProperty.LABEL], ["AI에게 질문"])
         input_scroll = Gtk.ScrolledWindow(child=self._input, min_content_height=36,
                                          max_content_height=72, propagate_natural_height=True,
                                          hscrollbar_policy=Gtk.PolicyType.NEVER)
@@ -96,7 +97,19 @@ class ChatPanel(Gtk.Box):
         self._action_stack.add_named(self.stop_button, "stop")
         footer.append(self._action_stack)
         self.append(footer)
+        self.refresh_provider()
         self._render()
+
+    def refresh_provider(self):
+        if self._runner is not None:
+            return
+        try:
+            config = load_config()
+            text = ("OpenAI API · " + config["model"] + " · 별도 사용 요금"
+                    if config["provider"] == "openai" else "로컬 Codex · ChatGPT 사용 한도 적용")
+        except AIError as exc:
+            text = str(exc)
+        self._status.set_text(text)
 
     @staticmethod
     def _text(buffer):
@@ -134,7 +147,7 @@ class ChatPanel(Gtk.Box):
         self._dirty = False
         self._save_failed = False
         self._input.get_buffer().set_text(self._drafts.get(str(path), ""))
-        self._status.set_text("로컬 Codex · ChatGPT 사용 한도 적용")
+        self.refresh_provider()
         self.refresh_context()
         self._render()
         self._sync_buttons()
@@ -201,7 +214,7 @@ class ChatPanel(Gtk.Box):
     def _add_message(self, message, complete=False):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         assistant = message.get("role") == "assistant"
-        label = "Codex" if assistant else "나"
+        label = ("OpenAI API" if message.get("provider") == "openai" else "Codex") if assistant else "나"
         if "timestamp" in message:
             label += " · " + format_stamp(message["timestamp"])
         if message.get("status") == "interrupted":
@@ -239,10 +252,16 @@ class ChatPanel(Gtk.Box):
         text = self._text(self._input.get_buffer()).strip()
         if self.doc is None or self._runner is not None or not text:
             return False
-        ready, hint = ensure_ready()
-        if not ready:
-            self._status.set_text(hint)
+        try:
+            config = load_config()
+        except AIError as exc:
+            self._status.set_text(str(exc))
             return False
+        if config['provider'] == 'codex':
+            ready, hint = ensure_ready()
+            if not ready:
+                self._status.set_text(hint)
+                return False
         history = [dict(m) for m in self.doc.messages]
         include = self.context_check.get_active()
         notes = self.window._notes
@@ -262,20 +281,23 @@ class ChatPanel(Gtk.Box):
         self._add_message(user_message)
         self._answer = ""
         self._answer_message = {"role": "assistant", "content": "", "timestamp": self._position,
-                                "status": "completed"}
+                                "status": "completed", "provider": config["provider"]}
         self._answer_buffer, self._answer_button = self._add_message(self._answer_message)
         self._dirty = True
         self._input.get_buffer().set_text("")
         self._generation += 1
         generation = self._generation
-        self._runner = AskRunner(
+        runner_class = APIAskRunner if config["provider"] == "openai" else AskRunner
+        options = {"config": config} if config["provider"] == "openai" else {}
+        self._runner = runner_class(
+            **options,
             on_delta=lambda t: GLib.idle_add(self._dispatch, generation, self._delta, t),
             on_done=lambda c, u: GLib.idle_add(self._dispatch, generation, self._done, c, u),
             on_error=lambda m: GLib.idle_add(self._dispatch, generation, self._error, m))
-        self._status.set_text("Codex에 연결하는 중…")
+        self._status.set_text("OpenAI API에 연결하는 중…" if config["provider"] == "openai" else "Codex에 연결하는 중…")
         self._sync_buttons()
         if not self._runner.ask(question):
-            self._error("질문을 보내지 못했습니다. Codex 연결을 확인해 주세요.")
+            self._error("질문을 보내지 못했습니다. AI 연결 설정을 확인해 주세요.")
             return False
         self._save()
         GLib.idle_add(self._to_bottom)
@@ -344,33 +366,49 @@ class ChatPanel(Gtk.Box):
             return
         stamp = format_stamp(message["timestamp"]) + " " if "timestamp" in message else ""
         partial = " (미완료)" if message.get("status") in ("error", "interrupted") else ""
-        text = "\n\n### " + stamp + "Codex 답변" + partial + "\n\n" + message.get("content", "") + "\n"
+        author = "OpenAI API" if message.get("provider") == "openai" else "Codex"
+        text = "\n\n### " + stamp + author + " 답변" + partial + "\n\n" + message.get("content", "") + "\n"
         notes._buffer.insert(notes._buffer.get_end_iter(), text)
         notes.save()
         button.set_label("메모에 넣음")
         button.set_sensitive(False)
         self.window.toast("답변을 메모에 넣었지만 저장하지 못했습니다. 메모의 저장 상태를 확인해 주세요."
-                          if notes.doc.dirty else "Codex 답변을 메모 끝에 넣었습니다")
+                          if notes.doc.dirty else "AI 답변을 메모 끝에 넣었습니다")
 
     def _check_connection(self, *_args):
         if self._checking:
             return
         self._checking = True
         self.connection_button.set_sensitive(False)
-        self._status.set_text("Codex 설치·로그인 상태 확인 중…")
+        try:
+            config = load_config()
+        except AIError as exc:
+            self._checking = False
+            self._sync_buttons()
+            self._status.set_text(str(exc))
+            return
+        self._status.set_text("AI 연결 확인 중…")
 
         def work():
             try:
-                result = check_connection()
+                result = (check_api(get_key(), config["model"]) if config["provider"] == "openai"
+                          else check_connection())
+            except AIError as exc:
+                result = str(exc)
             except Exception:
-                result = "Codex 연결을 확인하지 못했습니다. 설치·로그인 상태를 확인해 주세요."
+                result = "AI 연결을 확인하지 못했습니다. 연결 설정을 확인해 주세요."
             GLib.idle_add(done, result)
 
         def done(result):
             self._checking = False
             self._sync_buttons()
             if self._runner is None:
-                self._status.set_text(str(result))
+                try:
+                    unchanged = load_config() == config
+                except AIError:
+                    unchanged = False
+                if unchanged:
+                    self._status.set_text(str(result))
             return False
 
         threading.Thread(target=work, daemon=True).start()

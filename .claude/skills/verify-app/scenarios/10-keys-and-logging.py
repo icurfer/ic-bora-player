@@ -215,6 +215,18 @@ def main() -> int:
                 check("M2 우클릭 메뉴가 네 귀퉁이에서 화면 안에 들어온다",
                       not bad, ", ".join(bad) if bad else f"영상 {vw}x{vh}")
 
+                check("환경설정 톱니바퀴와 툴팁", win._settings_button.get_icon_name() == "emblem-system-symbolic"
+                      and win._settings_button.get_tooltip_text() == "환경설정")
+                win._settings_button.popup()
+                pump(.3)
+                check("상단 환경설정 열림", win._settings_popover.get_visible()
+                      and win._settings_popover.get_child() is not None)
+                win._settings_popover.popdown()
+                from unittest.mock import patch
+                with patch.object(win, "_typing", return_value=True), patch.object(win, "close") as close:
+                    handled = win._on_key(None, Gdk.KEY_w, 0, Gdk.ModifierType.CONTROL_MASK)
+                    check("입력 중 Ctrl+W도 종료 절차 호출", handled and close.call_count == 1)
+
                 # X1 — 종료 경로. 반드시 **맨 마지막**이다(엔진을 닫는다).
                 # 예전에는 player.close() 뒤에도 250ms 폴링과 타임라인 프레임 콜백이
                 # 한 박자 더 돌아 `mpv.ShutdownError` 를 냈고 크래시 리포터까지 떴다.

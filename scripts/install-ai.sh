@@ -3,4 +3,4 @@
 set -euo pipefail
 echo 'Codex 연동은 보라에 기본 포함됩니다. 별도 Python SDK 설치가 필요 없습니다.'
 echo '로컬 Codex 설치: https://learn.chatgpt.com/docs/quickstart'
-echo '보라 메뉴 → Codex 연결에서 ChatGPT 계정으로 로그인하세요.'
+echo '보라 환경설정 → AI 연결에서 ChatGPT 로그인 또는 내 OpenAI API 키를 선택하세요.'

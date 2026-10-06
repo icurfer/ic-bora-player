@@ -86,7 +86,7 @@ class NotePanel(Gtk.Box):
                                    tooltip_text="Codex와 파일 작업 (Ctrl+Enter)")
         self._ask_btn.connect("clicked", lambda *_: self.ask_current_line())
         bar.append(self._ask_btn)
-        settings = Gtk.Button(icon_name="emblem-system-symbolic", tooltip_text="Codex 연결")
+        settings = Gtk.Button(icon_name="emblem-system-symbolic", tooltip_text="AI 연결 · 로그인/API 키")
         settings.connect("clicked", lambda *_: self.window.show_ai_settings())
         bar.append(settings)
 

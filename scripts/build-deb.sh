@@ -63,7 +63,7 @@ Priority: optional
 Architecture: all
 Maintainer: icurfer <noreply@icurfer.com>
 Installed-Size: $INSTALLED_KB
-Depends: python3 (>= 3.10), python3-gi, python3-gi-cairo, gir1.2-gtk-4.0, gir1.2-adw-1, python3-mpv, ffmpeg
+Depends: python3 (>= 3.10), python3-gi, python3-gi-cairo, gir1.2-gtk-4.0, gir1.2-adw-1, gir1.2-secret-1, gnome-keyring, python3-mpv, ffmpeg
 Recommends: ffmpeg, fonts-noto-cjk, gnome-terminal
 Suggests: python3-venv
 Description: 국내 자막을 제대로 다루는 리눅스 미디어 플레이어
@@ -73,7 +73,8 @@ Description: 국내 자막을 제대로 다루는 리눅스 미디어 플레이�
  강의 학습 도구이기도 하다 — 타임스탬프가 붙는 마크다운 메모, 구간 반복(A-B), 핀,
  음성 텍스트 추출, AI 질의를 제공한다.
  .
- Codex 터미널 작업과 앱 안 대화 UI를 기본 제공한다. 로컬 Codex와 ChatGPT 로그인이 필요하다.
+ Codex 터미널 작업과 앱 안 AI 대화 UI를 기본 제공한다.
+ 로컬 Codex와 ChatGPT 로그인 또는 사용자의 OpenAI API 키를 선택한다.
  텍스트 추출(faster-whisper)만 별도 설치가 필요하다. /usr/share/doc/bora/README.md 참고.
 EOF
 

@@ -189,6 +189,25 @@ class Probe(BoraApplication):
                 with patch.object(chat.doc, "save", side_effect=OSError("test write failure")):
                     check("저장 실패 시 전환 차단", not chat.load_for(b) and chat._path == a)
                 check("오류 해결 뒤 저장", chat.prepare_leave())
+            from bora.ai import api
+            import io
+            payload = (b'data: {"type":"response.output_text.delta","delta":"API reply"}\n\n'
+                       b'data: {"type":"response.completed","response":{"usage":{}}}\n\n')
+            api.save_config('openai', api.DEFAULT_MODEL)
+            chat.refresh_provider()
+            chat.set_question("API 방식으로 질문")
+            with patch.object(api, 'get_key', return_value='test-placeholder'), \
+                    patch.object(api, '_open', return_value=io.BytesIO(payload)) as network, \
+                    patch.object(panel_module, 'AskRunner', side_effect=AssertionError('Codex fallback')):
+                check("API 선택 후 실제 API runner 전송", chat.send())
+                check("API 모의 스트림 완료", wait_for(lambda: chat._runner is None))
+                check("API 응답 제공자 보존", chat.doc.messages[-1].get('provider') == 'openai'
+                      and chat.doc.messages[-1]['content'] == 'API reply')
+                check("API Responses 경로 사용", network.call_args.args[1] == 'responses')
+                chat._answer_button.emit('clicked')
+                check("메모에 API 작성자 구분", 'OpenAI API 답변' in notes._text())
+            api.save_config('codex', api.DEFAULT_MODEL)
+            chat.refresh_provider()
             w.set_default_size(960, 560)
             pump(.4)
             check("기존 960x560에서 두 입력 표시", notes._view.get_mapped() and chat._input.get_mapped()

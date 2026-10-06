@@ -225,6 +225,11 @@ class BoraWindow(Adw.ApplicationWindow):
         return isinstance(focus, (Gtk.Editable, Gtk.TextView))
 
     def _on_key(self, _c, keyval: int, _code: int, state: Gdk.ModifierType) -> bool:
+        if (state & Gdk.ModifierType.CONTROL_MASK
+                and not state & (Gdk.ModifierType.ALT_MASK | Gdk.ModifierType.SHIFT_MASK)
+                and keyval in (Gdk.KEY_w, Gdk.KEY_W)):
+            self.close()
+            return True
         if state & Gdk.ModifierType.CONTROL_MASK and not self._typing():
             shift = bool(state & Gdk.ModifierType.SHIFT_MASK)
             if keyval in (Gdk.KEY_e, Gdk.KEY_E):
@@ -448,7 +453,8 @@ class BoraWindow(Adw.ApplicationWindow):
     def _hide_ui(self) -> bool:
         self._hide_ui_id = 0
         # 자막 메뉴를 열어 둔 채로 감추면 조작을 뺏는다.
-        busy = self._sub_popover.get_visible() or self._menu_popover.get_visible()
+        busy = (self._sub_popover.get_visible() or self._menu_popover.get_visible()
+                or self._settings_popover.get_visible())
         if self.is_fullscreen() and not busy:
             self._show_chrome(False)
         return False
@@ -502,11 +508,7 @@ class BoraWindow(Adw.ApplicationWindow):
 
     # ── 구성 ─────────────────────────────────────────────────────────────
     def _build_header(self) -> Gtk.Widget:
-        """제목·열기·상태만 둔다.
-
-        기능 버튼은 전부 하단 메뉴로 내렸다 — 헤더에 여섯 개까지 늘자 무엇이 무엇인지 알기
-        어려웠고, 전체화면에서 헤더를 감추면 손이 닿지 않았다. 하단 바는 재생 중에도 늘 보이는 자리다.
-        """
+        """제목·파일 열기·환경설정·재생 상태를 표시한다."""
         header = Adw.HeaderBar()
         self._title = Adw.WindowTitle(title="Bora", subtitle="")
         header.set_title_widget(self._title)
@@ -514,6 +516,14 @@ class BoraWindow(Adw.ApplicationWindow):
         open_btn = Gtk.Button(icon_name="document-open-symbolic", tooltip_text="파일 열기 (O)")
         open_btn.connect("clicked", lambda *_: self.choose_file())
         header.pack_start(open_btn)
+
+        self._settings_button = Gtk.MenuButton(icon_name="emblem-system-symbolic",
+                                               tooltip_text="환경설정")
+        self._settings_button.update_property([Gtk.AccessibleProperty.LABEL], ["환경설정"])
+        self._settings_popover = Gtk.Popover()
+        self._settings_button.set_popover(self._settings_popover)
+        self._settings_popover.connect("show", lambda *_: self._rebuild_more_menu(self._settings_popover))
+        header.pack_end(self._settings_button)
 
         self._status = Gtk.Label(label="", css_classes=["dim-label"])
         header.pack_end(self._status)
@@ -524,7 +534,7 @@ class BoraWindow(Adw.ApplicationWindow):
     SPEEDS = (0.5, 0.75, 1.0, 1.25, 1.5, 2.0)
     ASPECTS = (("원본", "-1"), ("16:9", "16:9"), ("4:3", "4:3"), ("2.35:1", "2.35:1"))
 
-    def _rebuild_more_menu(self) -> None:
+    def _rebuild_more_menu(self, target=None) -> None:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
                       margin_top=10, margin_bottom=10, margin_start=10, margin_end=10)
 
@@ -633,7 +643,14 @@ class BoraWindow(Adw.ApplicationWindow):
                 btn.set_tooltip_text(item.path)
                 btn.connect("clicked", self._on_recent_clicked, item.path)
                 box.append(btn)
-        self._more_popover.set_child(box)
+        box.append(Gtk.Separator(margin_top=4))
+        codex = Gtk.Button(label="AI 연결 · 로그인/API 키")
+        def connect_codex(*_):
+            (target or self._more_popover).popdown()
+            self.show_ai_settings()
+        codex.connect("clicked", connect_codex)
+        box.append(codex)
+        (target or self._more_popover).set_child(self._scrollable_menu(box))
 
     def _on_speed_toggled(self, button: Gtk.ToggleButton, value: float) -> None:
         if button.get_active():
@@ -703,6 +720,7 @@ class BoraWindow(Adw.ApplicationWindow):
 
     def _on_recent_clicked(self, _button, path: str) -> None:
         self._more_popover.popdown()
+        self._settings_popover.popdown()
         self.open_path(Path(path))
 
     # ── 학습 메모 ────────────────────────────────────────────────────────
@@ -1416,9 +1434,9 @@ class BoraWindow(Adw.ApplicationWindow):
                                   "열려 있다" if self._notes_open else "영상 옆 .md 에 기록"))
         box.append(self._menu_row("Codex와 파일 작업", "", self.open_codex_terminal,
                                   "메모 폴더에서 터미널 열기 · 기본"))
-        box.append(self._menu_row("Codex 대화", "", self.show_chat,
+        box.append(self._menu_row("AI 대화", "", self.show_chat,
                                   "현재 영상에 대해 물어보기"))
-        box.append(self._menu_row("Codex 연결", "", self.show_ai_settings,
+        box.append(self._menu_row("AI 연결 · 로그인/API 키", "", self.show_ai_settings,
                                   "ChatGPT 로그인 · 연결 확인"))
         ready, _hint = ensure_ready()
         box.append(self._menu_row("음성에서 자막 만들기", "", self._show_extract_menu,
