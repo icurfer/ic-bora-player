@@ -33,7 +33,7 @@ CLI 옵션, 메모·설정·대화 파일 형식과 보존/이관 동작을 호�
 
 개발 빌드는 Git 커밋과 dirty 표시를 추가한다. 예: `0.26.6-dev.1+git.abcdef123456.dirty`.
 이는 추적용이며 릴리스가 아니다. 같은 커밋의 서로 다른 dirty 빌드는 동일 식별자를 가질 수 있으므로
-공유/배포하지 않는다. 개발 패키지는 로컬 시험용이고 자동 업그레이드 순서를 보장하지 않는다.
+공유/배포하지 않는다. 개발 패키지는 시험용이고 자동 업그레이드 순서를 보장하지 않는다.
 
 ## Debian과 Python의 표기
 
@@ -49,14 +49,16 @@ Python 패키징 도구는 PEP 440에 따라 `1.2.3rc1`처럼 정규화할 수 �
 ## 개발과 배포 절차
 
 1. 일반 커밋/PR: 코드와 관련 기록을 수정하고 검증한다. 제품 변경은 CHANGELOG Unreleased에 추가한다.
-   문서만 수정하면 제품 버전을 바꾸지 않는다. 검사는 로컬에서 직접 실행한다. GitHub Actions CI/CD는 사용하지 않는다.
-2. 로컬 빌드: `bash scripts/build-deb.sh`. 커밋 식별자가 붙은 개발 패키지가 생성된다.
+   문서만 수정하면 제품 버전을 바꾸지 않는다. main push/PR에서 GitHub Actions가 정책·단위 검사를 실행한다.
+2. GitHub Actions의 표준 Ubuntu 실행 서버가 개발 deb를 빌드하고 설치·버전·체크섬을 확인한다.
+   개발 패키지와 SHA256SUMS는 실행 페이지의 development-deb artifact에 14일 보관한다.
+   Actions 화면의 Run workflow로도 실행할 수 있다. 로컬에서 배포 패키지를 빌드하지 않는다.
 3. 릴리스 준비: 버전 확정, `CHANGELOG.md`에 `## [버전]` 항목과 날짜, 아래 검증 기록을 작성한다.
 4. 실제 지원 환경에서 단위·GUI E2E·설치/재실행을 검증한다. 모의 API와 실제 유료 응답은 구분한다.
    GTK 초기화 실패나 처리 함수 직접 호출은 실제 키입력 E2E 통과가 아니다.
 5. 커밋·push 후 깨끗한 커밋에 `git tag -a v<버전> -m 'Bora <버전>'`, `git push origin v<버전>`.
-6. 로컬에서 `bash scripts/build-deb.sh --release`로 패키지를 만들고 설치·재실행을 확인한다.
-   배포할 파일의 SHA256 체크섬을 생성하고, GitHub Releases에서 해당 태그를 선택해 패키지와 함께 직접 첨부한다.
+6. 태그를 받은 GitHub Actions가 `bash scripts/build-deb.sh --release`로 빌드하고
+   버전과 체크섬을 확인한 뒤 패키지와 SHA256SUMS를 GitHub Draft Release에 자동 첨부한다.
 7. 검증 결과·패키지·후보 표시를 확인하고 Release를 공개한다. dev 버전은 릴리스하지 않는다.
 
 `docs/releases/<버전>.md`에는 사용자용 변경 내역과 설치 방법 외에 다음 상태와 구체적인 근거를 적는다.
@@ -76,7 +78,9 @@ Platform: Ubuntu 26.04
 
 소스·빌드 스크립트·문서만 Git에 보관한다. 새 `.deb` 등 설치 파일은 dist에 생성하되 추적하지 않는다.
 정식 설치 파일은 [GitHub Releases](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases)
-첨부로 직접 올린다. 개발 빌드 산출물은 로컬 dist에 보관한다.
+첨부로 CI가 올린다. 개발 빌드는 Actions artifact로 제공한다.
+표준 GitHub-hosted runner만 사용하며, 고성능 유료 runner는 사용하지 않는다.
+CI의 가상 화면 단위 검사와 패키지 설치 성공을 실제 사용자 GUI E2E 통과로 보고하지 않는다.
 공개한 태그나 같은 버전의 파일을 교체하지 않는다. 문제가 있으면 새 버전을 낸다.
 
 ## 2026-10-09 전환 기록

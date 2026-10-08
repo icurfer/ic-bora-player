@@ -1,0 +1,55 @@
+name: Draft release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Install validation and build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-pytest python3-gi python3-gi-cairo python3-pil gir1.2-gtk-4.0 gir1.2-adw-1 python3-mpv ffmpeg xvfb xauth fakeroot
+      - name: Verify release input
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 scripts/version_policy.py --release-tag "$RELEASE_TAG"
+          bash scripts/check-conventions.sh --all
+          xvfb-run -a /usr/bin/python3 -m pytest -q --junitxml="$RUNNER_TEMP/tests.xml"
+      - name: Report test failures
+        if: failure()
+        run: |
+          /usr/bin/python3 - <<'PYTEST'
+          import os
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          report = Path(os.environ['RUNNER_TEMP']) / 'tests.xml'
+          if report.exists():
+              for case in ET.parse(report).iter('testcase'):
+                  for kind in ('failure', 'error'):
+                      for failure in case.findall(kind):
+                          message = (case.get('name', '') + ': ' + (failure.text or ''))[-5000:]
+                          message = message.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+                          print('::error::' + message)
+          PYTEST
+      - name: Build and verify package
+        run: |
+          bash scripts/build-deb.sh --release
+          expected="$(python3 scripts/version_policy.py --debian)"
+          test "$(dpkg-deb -f "dist/bora_${expected}_all.deb" Version)" = "$expected"
+          (cd dist && sha256sum *.deb > SHA256SUMS)
+      - name: Create draft with assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          args=(--draft --verify-tag --title "Bora $RELEASE_TAG" --notes-file "docs/releases/$(cat version).md")
+          if [[ "$(cat version)" == *-* ]]; then args+=(--prerelease); fi
+          gh release create "$RELEASE_TAG" dist/*.deb dist/SHA256SUMS "${args[@]}"
