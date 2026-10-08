@@ -46,7 +46,7 @@ jobs:
           test "$(dpkg-deb -f "dist/bora_${expected}_all.deb" Version)" = "$expected"
           sudo apt-get install -y ./dist/*.deb
           actual="$(/usr/bin/python3 -c 'import bora; print(bora.__version__)')"
-          test "${actual/-/~}" = "$expected"
+          test "$(printf '%s' "$actual" | tr '-' '~')" = "$expected"
           (cd dist && sha256sum *.deb > SHA256SUMS)
       - name: Create draft with assets
         env:
