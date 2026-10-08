@@ -12,6 +12,7 @@ import threading
 import time
 
 from .context import Question, build, to_request
+from .images import ImageError, load_images, codex_input
 
 MODELS = ()  # 모델은 사용자의 Codex 설정을 따른다.
 DEFAULT_MODEL = ''
@@ -196,14 +197,16 @@ class AskRunner:
             with Session(self._cancelled) as session:
                 session.require_chatgpt()
                 request = to_request(build(question))
+                attachments = load_images(question.image_paths, question.note_path)
                 thread = session.rpc('thread/start', {
                     'cwd': session.work.name, 'ephemeral': True,
                     'approvalPolicy': 'never', 'sandbox': 'read-only',
                     'baseInstructions': request['instructions'],
                     'developerInstructions': '제공된 학습 자료로 대화만 한다. 도구 실행, 파일 읽기나 수정, 웹 검색을 하지 않는다.',
                 })['thread']['id']
-                result = session.rpc('turn/start', {'threadId': thread, 'input': [
-                    {'type': 'text', 'text': request['input']}], 'serviceTierForTurn': 'default'})
+                if self._cancelled.is_set():
+                    return
+                result = session.rpc('turn/start', {'threadId': thread, 'input': codex_input(request['input'], attachments, session.work.name), 'serviceTierForTurn': 'default'})
                 turn = result['turn']['id']
                 deadline = time.monotonic() + 180
                 text_seen = {}
@@ -232,7 +235,7 @@ class AskRunner:
                         if self.on_done:
                             self.on_done(None, {})
                         return
-        except CodexError as exc:
+        except (CodexError, ImageError) as exc:
             if not self._cancelled.is_set() and self.on_error:
                 self.on_error(str(exc))
         except Exception:

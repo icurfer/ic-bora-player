@@ -10,6 +10,7 @@ from urllib.request import Request, build_opener, HTTPRedirectHandler
 
 from ..platform import paths, credentials
 from .context import build, to_request
+from .images import ImageError, load_images, api_input
 
 DEFAULT_MODEL = 'gpt-4.1-mini'
 
@@ -150,6 +151,10 @@ class APIAskRunner:
             if self._cancelled.is_set():
                 return
             body = to_request(build(question))
+            attachments = load_images(question.image_paths, question.note_path)
+            body['input'] = api_input(body['input'], attachments)
+            if self._cancelled.is_set():
+                return
             body.update(model=self.config['model'], stream=True, store=False, max_output_tokens=4096)
             with _open(key, 'responses', body) as response:
                 self._response = response
@@ -180,7 +185,7 @@ class APIAskRunner:
                 raise AIError('API 연결이 답변 완료 전에 끊겼습니다. 다시 질문하세요.')
         except Exception as exc:
             if not self._cancelled.is_set() and self.on_error:
-                self.on_error(str(exc) if isinstance(exc, AIError) else
+                self.on_error(str(exc) if isinstance(exc, (AIError, ImageError)) else
                               'API 응답을 처리하지 못했습니다. 연결과 모델 설정을 확인하세요.')
         finally:
             self._response = None

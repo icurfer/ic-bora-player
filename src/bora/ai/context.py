@@ -21,7 +21,7 @@ log = get_logger("ai.context")
 
 SYSTEM = (
     "너는 강의를 보며 공부하는 사람을 돕는다. 한국어로 간결하게 답한다.\n"
-    "- 자막과 메모에 있는 내용을 근거로 답한다.\n"
+    "- 자막과 메모, 실제 첨부된 이미지의 내용을 근거로 답한다. 이미지 링크 텍스트와 실제 첨부를 구분한다.\n"
     "- 거기 없는 것은 추측하지 말고 모른다고 말한다. 일반 지식으로 답할 때는 그렇다고 밝힌다.\n"
     "- 학습자가 이어서 메모할 수 있게 짧게 쓴다. 서론·맺음말을 넣지 않는다."
 )
@@ -42,6 +42,8 @@ class Question:
     subtitle_path: Path | None = None
     note_text: str = ""
     note_line: int = -1
+    note_path: Path | None = None
+    image_paths: list[Path] = field(default_factory=list)
     model: str = ""
     history: list = field(default_factory=list)
     full_subtitle: str = field(default="", repr=False)

@@ -26,45 +26,8 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 # ── Config (tune these for your project) ────────────────────────────────────
-# AREAS — one entry per deployable unit, expressed as two PARALLEL arrays:
-# AREA_CODE_RE[i] is the code paths that "must be deployed"; AREA_VFILE[i] is the
-# deploy-trigger file CI watches. Touching those paths without bumping that file
-# in the SAME commit means CI never fires. (Two arrays, not a delimited string,
-# because a CODE_RE like '(src/|lib/)' already contains '|'.)
-#
-# AREA_CODE_RE[i] is an extended regex matched against staged paths (repo-root
-# relative). A single-deploy-unit repo has ONE area (the default below). A
-# monorepo adds one per unit and ANCHORS each with '^' so units don't bleed:
-#   AREA_CODE_RE=( '^backend/'               '^frontend/(src/|public/)' )
-#   AREA_VFILE=(   'backend/version'         'frontend/version'         )
-# (module: monorepo — /praxis-init enables this shape when it detects >1 unit.)
-# 이 저장소: 배포 단위 하나(데스크톱 앱), 트리거는 루트 'version'.
-# 아직 코드가 없어 코드 경로는 기획서 §5 의 예정 배치다 — 실제 트리를 만들 때 맞춘다.
-#
-# ⚠ docs/spec · docs/research · docs/scope · docs/deferred · docs/done 도 포함한다.
-#   CI 가 아직 없더라도 version 은 프로젝트의 진행 상태 표시이므로 관리한다(사용자 지시, 2026-09-13).
-#   기획 단계에서는 산출물이 문서뿐이라, 문서를 빼면 version 이 영영 안 움직인다.
-# 제외: scripts/(개발 도구) · docs/README.md · docs/requirements/(색인·백로그는 잦은 갱신)
-AREA_CODE_RE=(
-  '^(src/|bora/|data/|po/|packaging/|docs/(spec|research|scope|deferred|done)/|pyproject\.toml$|setup\.cfg$|meson\.build$|requirements[^/]*\.txt$|[^/]*\.(desktop|metainfo\.xml)$|[^/]*\.flatpak\.(ya?ml|json)$)'
-)
-AREA_VFILE=(
-  'version'
-)
-
-# DEPLOY_MANIFESTS — optional. Keep a deploy manifest's image tag in sync with a
-# version file, so a version bump can't ship without updating what actually
-# deploys. Empty = disabled. One entry per pair:
-#   'VERSION_FILE|MANIFEST_FILE|TAG_REGEX'
-# TAG_REGEX is an extended regex with ONE capture group for the tag, and it MUST
-# match your manifest's ACTUAL layout — a nested-YAML `tag: "x"` and a flattened
-# `image.tag: x` need different regexes. Verify it once:
-#   sed -nE 's/.*<TAG_REGEX>.*/\1/p' <manifest>   # should print just the tag
-# (module: deploy-manifest — enable on k8s/Helm/compose repos.)
-DEPLOY_MANIFESTS=(
-  # nested Helm values.yaml (image:\n  tag: "1.2.3"):
-  # 'backend/version|helm/backend/values.yaml|tag:[[:space:]]*"?([^"[:space:]]+)"?'
-)
+# 버전은 릴리스 단위로 변경한다. 코드/문서 커밋마다 bump를 요구하지 않는다.
+# 제품 버전과 배포 규칙: docs/RELEASING.md
 
 # Secret / taboo detection ---------------------------------------------------
 # Literal secrets — any match blocks outright (no placeholder exception).
@@ -112,9 +75,7 @@ MODE="${1:-}"
 # skipping exactly the files the gate must judge.
 gitq() { git -c core.quotepath=false "$@"; }
 
-# Three staged views: Gate A judges every change INCLUDING deletions (removing
-# deploy code is a deploy too); the "bump" must be a file that still EXISTS after
-# the commit; content scans read only files that will exist.
+# Secret/content 검사는 커밋에 포함되는 staged blob을 읽는다.
 CHANGED_LIST="$(gitq diff --cached --name-only --diff-filter=ACMRD || true)"
 PRESENT_LIST="$(gitq diff --cached --name-only --diff-filter=ACMR || true)"
 DELETED_LIST="$(gitq diff --cached --name-only --diff-filter=D || true)"
@@ -127,48 +88,24 @@ content() {
   else git show ":$1" 2>/dev/null; fi
 }
 
-# ── Gate A: deploy-trigger bump missing (per area) ──────────────────────────
-# Deploy-affecting code is staged but that area's version file is not → CI never
-# fires and the change silently never ships. Pure docs/config changes are exempt.
-# A staged DELETION of the version file is never a bump — it removes the trigger.
-for i in "${!AREA_CODE_RE[@]}"; do
-  code_re="${AREA_CODE_RE[$i]}"; vfile="${AREA_VFILE[$i]}"
-  [ -n "$code_re" ] && [ -n "$vfile" ] || continue
-  if printf '%s\n' "$DELETED_LIST" | grep -Fxq -e "$vfile"; then
-    err "'$vfile' is staged for DELETION — the deploy trigger would vanish and CI could never fire again."
-    printf '%s    → unstage it (git restore --staged %s), or bypass with --no-verify if this is an intentional restructure.%s\n' "$DIM" "$vfile" "$RST" >&2
-    continue
-  fi
-  if printf '%s\n' "$CHANGED_LIST" | grep -Eq -e "$code_re"; then
-    if printf '%s\n' "$PRESENT_LIST" | grep -Fxq -e "$vfile"; then
-      ok "deploy trigger bumped ('$vfile' staged with code change)"
-    else
-      err "deploy code changed but '$vfile' is not staged — CI won't fire."
-      printf '%s    → patch-bump %s and git add it. Changed code paths:%s\n' "$DIM" "$vfile" "$RST" >&2
-      printf '%s\n' "$CHANGED_LIST" | grep -E -e "$code_re" | sed 's/^/        /' >&2
-    fi
-  fi
+# ── Gate A: 필수 지침/버전과 바이너리 소스 추적 방지 ──────────────────
+for required in version AGENTS.md CLAUDE.md docs/RELEASING.md; do
+  content "$required" >/dev/null 2>&1 || err "필수 파일 누락: $required"
 done
+if printf '%s\n' "$PRESENT_LIST" | grep -Eiq '\.(deb|rpm|AppImage|exe|msi)$'; then
+  err "설치 바이너리는 Git에 추가하지 말고 GitHub Releases에 첨부하세요."
+fi
 
-# ── Gate B: version file format (one non-empty line, no blank second line) ──
-# Judged on the staged blob: a malformed blob with a fixed working tree must
-# still block (and vice versa must pass). A single trailing newline is fine —
-# blocking `1.2.3\n` would hard-block every editor-touched adopter repo.
-seen_vfiles=' '
-for vfile in "${AREA_VFILE[@]}"; do
-  [ -n "$vfile" ] || continue
-  case "$seen_vfiles" in *" $vfile "*) continue ;; esac
-  seen_vfiles="$seen_vfiles$vfile "
-  content "$vfile" >/dev/null 2>&1 || continue   # not tracked here → nothing to judge
-  nlines="$(content "$vfile" | awk 'END{print NR}')"
-  first="$(content "$vfile" | head -n1)"
-  if [ "${nlines:-0}" -ne 1 ] || [ -z "$first" ]; then
-    err "'$vfile' must be exactly one non-empty line (staged: ${nlines:-0} line(s))."
-    printf '%s    → printf %%s "<version>" > %s   (then git add it)%s\n' "$DIM" "$vfile" "$RST" >&2
+# ── Gate B: staging에 있는 버전 형식을 검사한다 ──────────────────────────
+if content version >/dev/null 2>&1; then
+  version_value="$(content version)"
+  version_lines="$(content version | awk 'END{print NR}')"
+  if [ "$version_lines" -ne 1 ] || ! python3 scripts/version_policy.py --value "$version_value" >/dev/null; then
+    err "version 형식이 올바르지 않습니다."
   else
-    ok "'$vfile' format ok ($first)"
+    ok "버전 형식 확인 (일반 커밋의 버전 증가는 요구하지 않음)"
   fi
-done
+fi
 
 # ── Gate C: forbidden patterns (secrets / taboos) ───────────────────────────
 # Reads the STAGED blob (or the working tree under --all) — never a mix, so a
@@ -231,19 +168,8 @@ while IFS= read -r f; do
   done < <(printf '%s\n' "$body" | grep -nIiE -e "$assign_re" || true)
 done < <(scan_targets)
 
-# ── Gate D: deploy-manifest sync (optional) ─────────────────────────────────
-# A version bump that doesn't update the manifest tag ships the OLD image.
-# Judged on staged blobs, like every other gate.
-for m in ${DEPLOY_MANIFESTS[@]+"${DEPLOY_MANIFESTS[@]}"}; do
-  [ -n "$m" ] || continue
-  vfile="${m%%|*}"; rest="${m#*|}"; mfile="${rest%%|*}"; tag_re="${rest#*|}"
-  content "$vfile" >/dev/null 2>&1 && content "$mfile" >/dev/null 2>&1 || continue
-  want="$(content "$vfile" | head -n1)"
-  have="$(content "$mfile" | sed -nE "s/.*${tag_re}.*/\1/p" | head -n1)"
-  if [ -n "$have" ] && [ "$want" != "$have" ]; then
-    err "version($want) != manifest tag($have) in $mfile — bump the manifest too."
-  fi
-done
+# Gate D (릴리스 태그/변경내역/검증기록)는 version_policy.py --release-tag에서 검사한다.
+# 일반 개발 커밋에는 릴리스 조건을 요구하지 않는다.
 
 # ── Gate E: dual-agent constitution sync (CLAUDE.md ↔ AGENTS.md) ────────────
 # One rule set, two native entrypoints: Claude Code reads CLAUDE.md, Codex

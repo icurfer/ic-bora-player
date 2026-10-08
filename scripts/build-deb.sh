@@ -11,11 +11,17 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
-VERSION="$(cat version)"
+case "${1:-}" in
+  --release)
+    VERSION="$(python3 scripts/version_policy.py --release-tag "v$(cat version)")" ;;
+  "") VERSION="$(python3 scripts/version_policy.py --development)" ;;
+  *) echo "사용법: bash scripts/build-deb.sh [--release]" >&2; exit 2 ;;
+esac
+DEB_VERSION="$(printf '%s' "$VERSION" | tr '-' '~')"
 PKG="bora"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
-ROOT="$STAGE/${PKG}_${VERSION}_all"
+ROOT="$STAGE/${PKG}_${DEB_VERSION}_all"
 
 mkdir -p "$ROOT/DEBIAN" \
          "$ROOT/usr/lib/python3/dist-packages" \
@@ -57,7 +63,7 @@ INSTALLED_KB="$(du -sk "$ROOT" | cut -f1)"
 
 cat > "$ROOT/DEBIAN/control" <<EOF
 Package: $PKG
-Version: $VERSION
+Version: $DEB_VERSION
 Section: video
 Priority: optional
 Architecture: all
@@ -99,10 +105,10 @@ EOF
 chmod 755 "$ROOT/DEBIAN/postrm"
 
 mkdir -p dist
-fakeroot dpkg-deb --build "$ROOT" "dist/${PKG}_${VERSION}_all.deb" >/dev/null
-echo "만들었다: dist/${PKG}_${VERSION}_all.deb  ($(du -h "dist/${PKG}_${VERSION}_all.deb" | cut -f1))"
+fakeroot dpkg-deb --build "$ROOT" "dist/${PKG}_${DEB_VERSION}_all.deb" >/dev/null
+echo "만들었다: dist/${PKG}_${DEB_VERSION}_all.deb  ($(du -h "dist/${PKG}_${DEB_VERSION}_all.deb" | cut -f1))"
 echo
-dpkg-deb --info "dist/${PKG}_${VERSION}_all.deb" | grep -E "Package|Version|Depends|Installed-Size"
+dpkg-deb --info "dist/${PKG}_${DEB_VERSION}_all.deb" | grep -E "Package|Version|Depends|Installed-Size"
 echo
-echo "설치:   sudo apt install ./dist/${PKG}_${VERSION}_all.deb"
+echo "설치:   sudo apt install ./dist/${PKG}_${DEB_VERSION}_all.deb"
 echo "제거:   sudo apt remove bora"

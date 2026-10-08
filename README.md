@@ -56,11 +56,19 @@
 
 ### deb 로 설치 (권장)
 
+설치 패키지는 앞으로 [Releases](https://github.com/icurfer/ic-bora-player/releases)의
+Assets에서 제공한다. **2026-10-09 기준 공개 Release는 아직 없다.**
+과거 설치본은 [0.26.5 당시 커밋](https://github.com/icurfer/ic-bora-player/tree/9cc088f/dist)에 보존돼 있다.
+
+개발 소스를 직접 빌드하려면:
+
 ```bash
-wget https://github.com/icurfer/ic-bora-player/raw/main/dist/bora_0.26.2_all.deb
-sudo apt install ./bora_0.26.2_all.deb
-bora <영상파일>
+bash scripts/build-deb.sh
+# 출력된 정확한 개발 패키지 경로를 사용한다.
+sudo apt install ./dist/<생성된-패키지명>.deb
 ```
+
+개발 패키지는 미검증 변경을 포함할 수 있다. 정식 배포 여부는 Releases에서 확인한다.
 
 의존성은 `python3-gi` · `python3-gi-cairo` · `gir1.2-gtk-4.0` · `gir1.2-adw-1` ·
 `python3-mpv` · `ffmpeg`이며 apt 가 알아서 받는다(`python3-mpv` 가 libmpv 를 끌고 온다).
@@ -145,7 +153,15 @@ bash /usr/share/doc/bora/install-stt.sh   # 음성 텍스트 추출
 타임라인에서 **눈금 띠**를 누르면 재생헤드가 옮겨 가고, **필름스트립 본체**를 누르면 구간이
 선택될 뿐 재생은 이어진다. 지운 구간을 지날 때는 화면이 검게 덮인다.
 
-메모 안에서: `Ctrl+T` 현재 시각 넣기 · `Ctrl+Enter` 이 줄을 Codex 터미널에 전달 · `Ctrl+S` 저장
+메모 안에서: `Ctrl+T` 현재 시각 · `Ctrl+Shift+S` 영상 캡처 넣기 · `Ctrl+S` 저장.
+`Ctrl+Enter`는 현재 줄로 Codex 터미널 열기, `Ctrl+Shift+Enter`는 앱 AI 질문 초안에 넣기(자동 전송 없음).
+AI 질문 입력에서 `Ctrl+Enter` 보내기, `Enter` 줄바꿈. `Ctrl+M` 메모·AI 패널 열기/닫기.
+메모 도구줄의 키보드 아이콘에서 단축키를 확인할 수 있다.
+
+AI 질문에 현재 메모의 로컬 이미지를 실제 첨부한다. **메모 이미지 첨부**를 끄면 보내지 않는다.
+텍스트 맥락과 이미지 첨부는 별개 선택이며 전송 전 개수를 표시한다.
+PNG·JPEG·WEBP 최대 4장/합계 20MB, 메모 폴더 안의 파일만 지원한다.
+누락 파일·외부 링크·제한 초과는 전송 전에 안내한다. 이미지도 사용량에 포함된다.
 
 ## 개발 규율
 
@@ -153,7 +169,7 @@ bash /usr/share/doc/bora/install-stt.sh   # 음성 텍스트 추출
 기계로 검사 가능한 것을 **커밋 시점에 강제**한다.
 
 - [`CLAUDE.md`](CLAUDE.md) — 헌법(작업 순서·위임된 책임·하지 말 것). 에이전트가 매 세션 읽는다.
-- `scripts/check-conventions.sh` — 커밋 게이트. `version` bump 누락·형식 위반·비밀값·한자·금칙어를 막는다.
+- `scripts/check-conventions.sh` — 커밋 게이트. 버전 형식·공통 지침 불일치·설치 파일 Git 추가·비밀값·금칙어를 검사한다.
 - `.claude/memory/` — 세션을 넘는 작업 규칙. `.claude/skills/verify-app/` — 표준 검증 절차.
 
 클론한 뒤 한 번만:
@@ -162,3 +178,9 @@ bash /usr/share/doc/bora/install-stt.sh   # 음성 텍스트 추출
 bash scripts/install-hooks.sh        # 커밋 게이트 활성화
 bash scripts/setup-claude-memory.sh  # 메모리를 git 으로 관리
 ```
+
+## 버전과 기여 지침
+
+Codex는 [AGENTS.md](AGENTS.md), Claude는 [CLAUDE.md](CLAUDE.md)를 읽는다.
+두 도구의 공통 기준은 [릴리스 정책](docs/RELEASING.md)이다.
+일반 코드·문서 커밋에는 버전 증가가 필요 없다. 변경은 Unreleased에 모으고 릴리스 단위로 결정한다.

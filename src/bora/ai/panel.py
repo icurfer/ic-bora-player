@@ -14,6 +14,7 @@ from gi.repository import Gdk, GLib, Gtk, Pango
 
 from .client import AskRunner, check_connection, ensure_ready
 from .context import Question
+from .images import ImageError, find_images
 from .api import AIError, APIAskRunner, load_config, check_api, get_key
 from .history import Conversation
 from ..notes.model import format_stamp
@@ -69,6 +70,14 @@ class ChatPanel(Gtk.Box):
         self.context_check = Gtk.CheckButton(label="주변 자막·메모 일부 함께 보내기", active=True)
         self.context_check.set_tooltip_text("현재 시각·질문·기존 대화는 항상 전달합니다. 모델 응답은 온라인으로 처리됩니다.")
         self.append(self.context_check)
+        self.image_check = Gtk.CheckButton(label="메모 이미지 첨부", active=True)
+        self.image_check.set_tooltip_text("현재 메모의 로컬 PNG·JPEG·WEBP 이미지 · 최대 4장/20MB · 전송 시 사용량에 포함")
+        self.image_check.connect("toggled", lambda *_: self.refresh_images())
+        self.append(self.image_check)
+        self._image_status = Gtk.Label(label="메모 이미지 없음", xalign=0, wrap=True,
+                                       wrap_mode=Pango.WrapMode.WORD_CHAR)
+        self._image_status.add_css_class("dim-label")
+        self.append(self._image_status)
         self._context_label = Gtk.Label(label="영상을 열면 이 영상의 대화가 표시됩니다.",
                                        xalign=0, wrap=True)
         self._context_label.add_css_class("dim-label")
@@ -81,6 +90,7 @@ class ChatPanel(Gtk.Box):
                                          hscrollbar_policy=Gtk.PolicyType.NEVER)
         input_scroll.add_css_class("frame")
         keys = Gtk.EventControllerKey()
+        keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         keys.connect("key-pressed", self._on_key)
         self._input.add_controller(keys)
         self._input.get_buffer().connect("changed", lambda *_: self._sync_buttons())
@@ -97,6 +107,10 @@ class ChatPanel(Gtk.Box):
         self._action_stack.add_named(self.stop_button, "stop")
         footer.append(self._action_stack)
         self.append(footer)
+        self._key_hint = Gtk.Label(label="Ctrl+Enter 보내기 · Enter 줄바꿈", xalign=0)
+        self._key_hint.add_css_class("dim-label")
+        self.append(self._key_hint)
+        self.window._notes._buffer.connect("changed", lambda *_: self.refresh_images())
         self.refresh_provider()
         self._render()
 
@@ -153,7 +167,29 @@ class ChatPanel(Gtk.Box):
         self._sync_buttons()
         return True
 
+    def _note_images(self):
+        notes = self.window._notes
+        if not self.image_check.get_active() or not notes.doc:
+            return []
+        if self._path != getattr(self.window, "_current", None):
+            return []
+        return find_images(notes._text(), notes.doc.path)
+
+    def refresh_images(self):
+        if not self.image_check.get_active():
+            self._image_status.set_text("이미지는 보내지 않습니다")
+            return
+        try:
+            images = self._note_images()
+            label = f"메모 이미지 {len(images)}장 · 전송 시 포함" if images else "메모 이미지 없음"
+            self._image_status.set_text(label)
+            self._image_status.set_tooltip_text("\n".join(p.name for p in images))
+        except ImageError as exc:
+            self._image_status.set_text(str(exc))
+            self._image_status.set_tooltip_text(None)
+
     def refresh_context(self):
+        self.refresh_images()
         has_subtitle = bool(getattr(self.window, "_plan", None))
         if self._path is not None:
             self._context_label.set_text("현재 시각을 함께 보냅니다 · " +
@@ -188,7 +224,8 @@ class ChatPanel(Gtk.Box):
         self.connection_button.set_sensitive(not self._checking and not running)
 
     def _on_key(self, _controller, key, _code, modifiers):
-        if key in (Gdk.KEY_Return, Gdk.KEY_KP_Enter) and modifiers & Gdk.ModifierType.CONTROL_MASK:
+        if (key in (Gdk.KEY_Return, Gdk.KEY_KP_Enter) and modifiers & Gdk.ModifierType.CONTROL_MASK
+                and not modifiers & (Gdk.ModifierType.SHIFT_MASK | Gdk.ModifierType.ALT_MASK | Gdk.ModifierType.SUPER_MASK)):
             self.send()
             return True
         return False
@@ -221,6 +258,8 @@ class ChatPanel(Gtk.Box):
             label += " · 중지됨"
         elif message.get("status") == "error":
             label += " · 미완료"
+        if not assistant and message.get("attachments"):
+            label += f" · 이미지 {len(message['attachments'])}장"
         title = Gtk.Label(label=label, xalign=0)
         title.add_css_class("heading")
         box.append(title)
@@ -262,6 +301,12 @@ class ChatPanel(Gtk.Box):
             if not ready:
                 self._status.set_text(hint)
                 return False
+        try:
+            image_paths = self._note_images()
+        except ImageError as exc:
+            self._status.set_text(str(exc))
+            self.refresh_images()
+            return False
         history = [dict(m) for m in self.doc.messages]
         include = self.context_check.get_active()
         notes = self.window._notes
@@ -271,12 +316,14 @@ class ChatPanel(Gtk.Box):
                             subtitle_path=plan.source if include and plan else None,
                             note_text=notes._text() if include and notes.doc else "",
                             note_line=notes._cursor_line() if include and notes.doc else -1,
-                            history=history)
+                            history=history, image_paths=image_paths,
+                            note_path=notes.doc.path if notes.doc else None)
         if not self.doc.messages:
             child = self._messages.get_first_child()
             if child:
                 self._messages.remove(child)
-        user_message = {"role": "user", "content": text, "timestamp": self._position}
+        user_message = {"role": "user", "content": text, "timestamp": self._position,
+                        "attachments": [p.name for p in image_paths]}
         self.doc.messages.append(user_message)
         self._add_message(user_message)
         self._answer = ""

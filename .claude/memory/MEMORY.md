@@ -9,7 +9,7 @@
 - [추정 전에 진단](feedback_diagnose_before_assume.md) — 증상 보고는 실제 탐침으로 재현부터. 사용자 가설도 검증 대상
 - [빠른 수정 금지](feedback_no_quick_fix.md) — 진단 → 기획 → 구현. 임시방편 직전이 가장 위험한 지점
 - [완료 전 검증](feedback_verify_before_done.md) — 끝까지 돌려보고 나서 완료라고 말한다
-- [사이클 끝은 push](feedback_push_is_one_cycle.md) — 코드·문서 함께, 관련 변경은 한 번의 버전 bump
+- [사이클 끝은 push](feedback_push_is_one_cycle.md) — 코드·문서 함께, 버전 증가는 릴리스 단위로 결정
 
 - [격리는 읽히기 전에](feedback_isolation_too_late.md) — 증상 하나가 사라진 것을 "고쳤다"로 읽지 않는다
 

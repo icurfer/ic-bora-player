@@ -226,6 +226,11 @@ class BoraWindow(Adw.ApplicationWindow):
 
     def _on_key(self, _c, keyval: int, _code: int, state: Gdk.ModifierType) -> bool:
         if (state & Gdk.ModifierType.CONTROL_MASK
+                and not state & (Gdk.ModifierType.ALT_MASK | Gdk.ModifierType.SHIFT_MASK | Gdk.ModifierType.SUPER_MASK)
+                and keyval in (Gdk.KEY_m, Gdk.KEY_M)):
+            self.toggle_notes()
+            return True
+        if (state & Gdk.ModifierType.CONTROL_MASK
                 and not state & (Gdk.ModifierType.ALT_MASK | Gdk.ModifierType.SHIFT_MASK)
                 and keyval in (Gdk.KEY_w, Gdk.KEY_W)):
             self.close()
@@ -1430,7 +1435,7 @@ class BoraWindow(Adw.ApplicationWindow):
                                   f"{len(audio)}개" if audio else "없음"))
         box.append(Gtk.Separator(margin_top=4, margin_bottom=4))
 
-        box.append(self._menu_row("학습 메모", "M", self.toggle_notes,
+        box.append(self._menu_row("학습 메모", "Ctrl+M", self.toggle_notes,
                                   "열려 있다" if self._notes_open else "영상 옆 .md 에 기록"))
         box.append(self._menu_row("Codex와 파일 작업", "", self.open_codex_terminal,
                                   "메모 폴더에서 터미널 열기 · 기본"))
@@ -1812,6 +1817,7 @@ class BoraWindow(Adw.ApplicationWindow):
         self.player.clear_loop()        # 다른 영상에 앞 파일의 구간이 남으면 안 된다
         self.player.open(path, self._plan)
         self._current = path
+        self._chat.refresh_context()
         self._title.set_title(path.name)
         self._title.set_subtitle(str(path.parent))
         self._sync_controls_enabled()

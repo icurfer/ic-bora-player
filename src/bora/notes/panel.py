@@ -61,6 +61,7 @@ class NotePanel(Gtk.Box):
         motion.connect("motion", self._on_motion)
         self._view.add_controller(motion)
         keys = Gtk.EventControllerKey()
+        keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         keys.connect("key-pressed", self._on_key)
         self._view.add_controller(keys)
 
@@ -89,6 +90,28 @@ class NotePanel(Gtk.Box):
         settings = Gtk.Button(icon_name="emblem-system-symbolic", tooltip_text="AI 연결 · 로그인/API 키")
         settings.connect("clicked", lambda *_: self.window.show_ai_settings())
         bar.append(settings)
+
+        self._shortcut_button = Gtk.MenuButton(icon_name="input-keyboard-symbolic",
+                                              tooltip_text="메모·AI 단축키 안내")
+        help_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8,
+                           margin_start=12, margin_end=12, margin_top=12, margin_bottom=12)
+        for heading, text in (
+            ("메모에서", "Ctrl+S  저장\nCtrl+T  현재 시각 넣기\nCtrl+Shift+S  영상 화면을 메모에 넣기\n"
+             "Ctrl+Enter  현재 줄로 Codex 터미널 열기\nCtrl+Shift+Enter  현재 줄을 앱 AI 질문에 넣기"),
+            ("앱 AI 질문에서", "Enter  줄바꿈\nCtrl+Enter  질문 보내기\n"
+             "메모에서 가져온 질문은 확인한 뒤 보내세요."),
+            ("어디서나", "Ctrl+M  메모·AI 패널 열기/닫기\nCtrl+W  창 닫기\n"
+             "재생 단축키는 메모·질문 입력 중에는 동작하지 않습니다."),
+        ):
+            title = Gtk.Label(label=heading, xalign=0)
+            title.add_css_class("heading")
+            help_box.append(title)
+            help_box.append(Gtk.Label(label=text, xalign=0, wrap=True,
+                                      wrap_mode=Pango.WrapMode.WORD_CHAR, max_width_chars=32))
+        help_scroll = Gtk.ScrolledWindow(child=help_box, hscrollbar_policy=Gtk.PolicyType.NEVER,
+                                        max_content_height=380, propagate_natural_height=True)
+        self._shortcut_button.set_popover(Gtk.Popover(child=help_scroll))
+        bar.append(self._shortcut_button)
 
         bar.append(Gtk.Label(hexpand=True))
 
@@ -327,15 +350,16 @@ class NotePanel(Gtk.Box):
     # 자동으로 부르지 않는다. 돈이 나가는 기능은 사용자가 누를 때만 나간다(기획서 v0.3 §4-5).
     def _on_key(self, _controller, keyval: int, _code: int, state) -> bool:
         ctrl = bool(state & Gdk.ModifierType.CONTROL_MASK)
-        if not ctrl:
+        shift = bool(state & Gdk.ModifierType.SHIFT_MASK)
+        if not ctrl or state & (Gdk.ModifierType.ALT_MASK | Gdk.ModifierType.SUPER_MASK):
             return False
         if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
-            self.ask_current_line()
+            self.ask_in_chat() if shift else self.ask_current_line()
             return True
-        if keyval == Gdk.KEY_s:
-            self.save(force=True)
+        if keyval in (Gdk.KEY_s, Gdk.KEY_S):
+            self.insert_screenshot() if shift else self.save(force=True)
             return True
-        if keyval == Gdk.KEY_t:
+        if keyval in (Gdk.KEY_t, Gdk.KEY_T) and not shift:
             self.insert_stamp()
             return True
         return False
@@ -357,6 +381,22 @@ class NotePanel(Gtk.Box):
             self.window.toast("물어볼 줄에 커서를 두세요")
             return False
         return self.window.open_codex_terminal(question)
+
+    def ask_in_chat(self) -> bool:
+        """현재 줄을 앱 질문 초안에 옮긴다. 기존 초안을 보존하며 전송하지 않는다."""
+        text, _line = self._current_line_text()
+        question = text.lstrip("#> ").strip()
+        if not question:
+            self.window.toast("앱 AI에 물어볼 줄에 커서를 두세요")
+            return False
+        self.window.show_chat()
+        chat = self.window._chat
+        if chat._path != self.window.current_path:
+            return False
+        draft = chat._text(chat._input.get_buffer())
+        chat.set_question(draft + "\n\n" + question if draft.strip() and draft.strip() != question else question)
+        self.window.toast("AI 질문에 넣었습니다. 확인한 뒤 Ctrl+Enter로 보내세요")
+        return True
 
     def _on_answer_delta(self, text: str) -> bool:
         # 줄바꿈마다 '> ' 를 붙여 인용 블록을 이어 간다.

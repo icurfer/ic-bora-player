@@ -1,6 +1,6 @@
-# Claude 프로젝트 지침
+# Codex 프로젝트 지침
 
-공통 규칙은 AGENTS.md와 동기화한다. 버전 정책 원문은 docs/RELEASING.md다.
+버전·배포 작업 전 docs/RELEASING.md를 읽는다. 공통 블록은 CLAUDE.md와 동일하게 유지한다.
 
 <!-- praxis:shared:begin -->
 # ic-bora-player (Bora · 보라)
@@ -99,20 +99,3 @@ libmpv 를 재생 엔진으로 쓰는 GTK 프론트엔드. 국내 자막(CP949 �
 클론마다 한 번: `bash scripts/install-hooks.sh`. 긴급 우회: `git commit --no-verify`.
 **회고에서 기계로 검사 가능한 규칙이 나오면 이 문서에 문장을 더하지 말고 그 스크립트에 게이트를 더한다.**
 <!-- praxis:shared:end -->
-
-## 새 규칙을 어느 층에 둘 것인가 (라우팅)
-기계적일수록, 자주 발동해야 할수록 **더 단단한 층**에 둔다:
-- **커밋 시점에 검사 가능** → `scripts/check-conventions.sh` 게이트
-- **에이전트의 도구 사용 중 발동**(차단·수정·반응) → `.claude/settings.json` 훅(PreToolUse/PostToolUse)
-- **반복되는 여러 단계 절차** → `.claude/skills/` 스킬
-- **떠올려야 할 지속적 사실** → `.claude/memory/`
-- **항상 켜둬야 할 판단 규칙** → 이 문서의 한 줄
-좁은 규칙을 항상 로드되는 층에 두지 않는다 — 무관한 모든 세션에 세금을 매긴다.
-
-## 메모리
-`.claude/memory/` 는 세션을 넘는 공유 메모리다(파일 하나에 사실 하나, `MEMORY.md` 가 색인).
-지속적인 사실만 저장하고 대화의 부스러기는 넣지 않는다. 클론마다 한 번
-`bash scripts/setup-claude-memory.sh` 를 실행하면 git 으로 버전 관리되며 매 세션 로드된다.
-`(STARTER RULE …)` 표시가 붙은 것은 기본 제공 규칙이니 맞으면 남기고 아니면 지운다.
-이 체계는 자라야 하지만 자란 만큼 정리돼야 한다 — 주기적으로 `/praxis-review`
-(또는 `bash scripts/praxis-review.sh`)로 낡은 규칙과 죽은 게이트를 쳐낸다.
