@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 미설치 환경에서 기본 앱 등록 상태 조회 시 발생하던 GIO 예외 처리.
+
 - 버전 정책을 릴리스 단위로 변경하고 Codex/Claude 공통 지침과 검사를 도입. GitHub Actions에서 deb를 빌드·검증하고 개발 artifact 또는 출시 태그의 Draft Release로 업로드.
 - 메모 이미지 실제 첨부(Codex·OpenAI), 첨부 상태·단축키 안내, AI Ctrl+Enter 입력 우선 처리 및 메모 캡처 단축키 수정.
 

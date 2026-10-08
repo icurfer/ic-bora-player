@@ -60,12 +60,13 @@
 Assets에서 제공한다. **2026-10-09 기준 공개 Release는 아직 없다.**
 과거 설치본은 [0.26.5 당시 커밋](https://github.com/icurfer/ic-bora-player/tree/9cc088f/dist)에 보존돼 있다.
 
-개발 소스를 직접 빌드하려면:
+개발 패키지는 [GitHub Actions의 Checks](https://github.com/icurfer/ic-bora-player/actions/workflows/ci.yml)에서
+성공한 실행의 **Artifacts → development-deb**를 다운로드한다(GitHub 로그인 필요, 14일 보관).
+검사·빌드·패키지 설치 확인·업로드는 GitHub 서버에서 수행한다. 압축을 풀고 다음을 실행한다:
 
 ```bash
-bash scripts/build-deb.sh
-# 출력된 정확한 개발 패키지 경로를 사용한다.
-sudo apt install ./dist/<생성된-패키지명>.deb
+sha256sum -c SHA256SUMS
+sudo apt install ./<다운로드한-패키지명>.deb
 ```
 
 개발 패키지는 미검증 변경을 포함할 수 있다. 정식 배포 여부는 Releases에서 확인한다.
@@ -82,7 +83,6 @@ sudo apt install ./dist/<생성된-패키지명>.deb
 sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 python3-mpv
 PYTHONPATH=src python3 -m bora <영상파일>
 
-bash scripts/build-deb.sh            # deb 를 직접 만들려면
 bash scripts/install-desktop.sh      # 앱 목록에만 등록(개발용, --remove 로 되돌림)
 ```
 

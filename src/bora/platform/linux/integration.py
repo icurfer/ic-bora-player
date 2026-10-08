@@ -37,7 +37,11 @@ VIDEO_TYPES = (
 
 def app_info() -> Gio.DesktopAppInfo | None:
     """설치된 Bora 의 .desktop. 없으면 None (등록 전이다)."""
-    return Gio.DesktopAppInfo.new(APP_DESKTOP_ID)
+    try:
+        return Gio.DesktopAppInfo.new(APP_DESKTOP_ID)
+    except TypeError:
+        # PyGObject는 미등록 ID의 NULL 반환을 TypeError로 전달하기도 한다.
+        return None
 
 
 def current_default(mime: str) -> str:

@@ -89,3 +89,14 @@ def test_is_default_checks_main_types(monkeypatch) -> None:
     monkeypatch.setattr(desktop, "current_default",
                         lambda m: "vlc_vlc.desktop" if m == "video/mp4" else desktop.APP_DESKTOP_ID)
     assert desktop.is_default() is False
+
+
+def test_missing_desktop_entry_is_normal_uninstalled_state(monkeypatch) -> None:
+    # 실제 GIO 생성자를 호출해 NULL 반환을 예외로 바꾸는 바인딩도 검증한다.
+    monkeypatch.setattr(desktop, "APP_DESKTOP_ID", "com.icurfer.Bora.NonexistentTest.desktop")
+    assert desktop.app_info() is None
+    assert desktop.can_set_default() is False
+    assert "설치되어 있지" in desktop.unsupported_reason()
+    ok, message = desktop.set_default(True)
+    assert not ok
+    assert "install-desktop" in message
