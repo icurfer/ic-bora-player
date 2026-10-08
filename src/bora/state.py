@@ -49,6 +49,8 @@ def _valid_setting(key, value, default) -> bool:
             return False
         if key == "sub_color":
             return not value or bool(re.fullmatch(r"#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?", value))
+        if key == "terminal_provider":
+            return value in ("codex", "claude")
         if key == "log_level":
             return value in ("", "warning", "info", "debug")
         return True
@@ -122,6 +124,7 @@ class Settings:
     sub_color: str = ""
     sub_pos: float = 100.0          # 0 = 화면 위, 100 = 기본(아래)
     ai_model: str = ""
+    terminal_provider: str = "codex"
     screenshot_dir: str = ""
     # 로그 등급. 빈 값이면 명령줄(--debug)·환경변수(BORA_DEBUG)가 정한 대로 둔다.
     log_level: str = ""

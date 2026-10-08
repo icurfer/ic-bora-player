@@ -83,11 +83,38 @@ class NotePanel(Gtk.Box):
         shot.connect("clicked", lambda *_: self.insert_screenshot())
         bar.append(shot)
 
-        self._ask_btn = Gtk.Button(label="Codex",
-                                   tooltip_text="Codex와 파일 작업 (Ctrl+Enter)")
-        self._ask_btn.connect("clicked", lambda *_: self.ask_current_line())
+        self._ask_btn = Gtk.MenuButton(label="Codex")
+        tool_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8,
+                           margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
+        tool_box.append(Gtk.Label(label="외부 터미널 도구", xalign=0, css_classes=["heading"]))
+        self._terminal_choices = {}
+        group = None
+        for provider, title in (("codex", "Codex"), ("claude", "Claude Code")):
+            choice = Gtk.CheckButton(label=title)
+            if group is not None:
+                choice.set_group(group)
+            else:
+                group = choice
+            choice.set_active(provider == self.window.state.settings.terminal_provider)
+            choice.connect("toggled", self._terminal_changed, provider)
+            self._terminal_choices[provider] = choice
+            tool_box.append(choice)
+        self._terminal_hint = Gtk.Label(xalign=0, wrap=True, max_width_chars=28)
+        tool_box.append(self._terminal_hint)
+        self._terminal_install = Gtk.LinkButton(label="설치 안내", uri="https://code.claude.com/docs/en/overview")
+        tool_box.append(self._terminal_install)
+        for label, action in (("현재 줄로 열기 (Ctrl+Enter)", self.ask_current_line),
+                              ("메모 폴더에서 열기", self.window.open_agent_terminal)):
+            button = Gtk.Button(label=label)
+            button.connect("clicked", lambda _b, action=action: self._run_terminal_action(action))
+            tool_box.append(button)
+        tool_box.append(Gtk.Label(label="별도 터미널에서 질문·편집합니다.\n아래 앱 AI 대화 설정과는 별개입니다.",
+                                  xalign=0, wrap=True, max_width_chars=28))
+        self._ask_btn.set_popover(Gtk.Popover(child=tool_box))
+        self._ask_btn.get_popover().connect("notify::visible", lambda *_: self._refresh_terminal_choice())
+        self._refresh_terminal_choice()
         bar.append(self._ask_btn)
-        settings = Gtk.Button(icon_name="emblem-system-symbolic", tooltip_text="AI 연결 · 로그인/API 키")
+        settings = Gtk.Button(icon_name="emblem-system-symbolic", tooltip_text="앱 AI 연결 · 로그인/API 키")
         settings.connect("clicked", lambda *_: self.window.show_ai_settings())
         bar.append(settings)
 
@@ -97,7 +124,7 @@ class NotePanel(Gtk.Box):
                            margin_start=12, margin_end=12, margin_top=12, margin_bottom=12)
         for heading, text in (
             ("메모에서", "Ctrl+S  저장\nCtrl+T  현재 시각 넣기\nCtrl+Shift+S  영상 화면을 메모에 넣기\n"
-             "Ctrl+Enter  현재 줄로 Codex 터미널 열기\nCtrl+Shift+Enter  현재 줄을 앱 AI 질문에 넣기"),
+             "Ctrl+Enter  현재 줄로 선택한 터미널 열기\nCtrl+Shift+Enter  현재 줄을 앱 AI 질문에 넣기"),
             ("앱 AI 질문에서", "Enter  줄바꿈\nCtrl+Enter  질문 보내기\n"
              "메모에서 가져온 질문은 확인한 뒤 보내세요."),
             ("어디서나", "Ctrl+M  메모·AI 패널 열기/닫기\nCtrl+W  창 닫기\n"
@@ -123,6 +150,29 @@ class NotePanel(Gtk.Box):
         close.connect("clicked", lambda *_: self.window.toggle_notes(False))
         bar.append(close)
         return bar
+
+    def _terminal_changed(self, choice, provider):
+        if choice.get_active():
+            self.window.state.settings.terminal_provider = provider
+            self.window.state.save()
+            self._refresh_terminal_choice()
+
+    def _refresh_terminal_choice(self):
+        from ..ai.workspace import PROVIDERS, terminal_command
+        provider = self.window.state.settings.terminal_provider
+        title = PROVIDERS[provider]
+        installed = terminal_command(provider) is not None
+        self._ask_btn.set_label("Claude" if provider == "claude" else "Codex")
+        self._ask_btn.set_tooltip_text(f"외부 {title} 터미널 · 도구 선택 (Ctrl+Enter로 현재 줄 전달)")
+        self._ask_btn.update_property([Gtk.AccessibleProperty.LABEL], [f"외부 터미널 도구: {title}"])
+        self._terminal_hint.set_text(f"{title} · " + ("설치됨 · 로그인은 터미널에서 확인" if installed else "설치 필요"))
+        self._terminal_install.set_uri("https://code.claude.com/docs/en/overview" if provider == "claude"
+                                       else "https://learn.chatgpt.com/docs/quickstart")
+        self._terminal_install.set_label(f"{title} 설치 안내")
+
+    def _run_terminal_action(self, action):
+        self._ask_btn.popdown()
+        action()
 
     def _build_status(self) -> Gtk.Widget:
         self._status = Gtk.Label(xalign=0, margin_start=10, margin_end=10, margin_bottom=6,
@@ -169,7 +219,7 @@ class NotePanel(Gtk.Box):
         self._buffer.set_text(text)
         self._loading = False
         self._retag()
-        self._update_status("Codex 또는 외부 편집기의 변경을 반영했습니다")
+        self._update_status("외부 편집기의 변경을 반영했습니다")
 
     def prepare_codex(self):
         self.refresh_external()
@@ -181,7 +231,7 @@ class NotePanel(Gtk.Box):
         if not self.prepare_leave():
             return False
         if not self.doc.path.exists():
-            # 처음 생성된 제목도 실제 파일로 만들어 Codex에 넘긴다.
+            # 처음 생성된 제목도 실제 파일로 만들어 터미널 도구에 넘긴다.
             if not self.save():
                 return False
         return True
@@ -374,13 +424,13 @@ class NotePanel(Gtk.Box):
         return self._buffer.get_text(start, end, True).strip(), line
 
     def ask_current_line(self) -> bool:
-        """저장된 메모 폴더에서 Codex 터미널을 열고 현재 줄을 전달한다."""
+        """저장된 메모 폴더에서 선택한 터미널을 열고 현재 줄을 전달한다."""
         text, _line = self._current_line_text()
         question = text.lstrip("#> ").strip()
         if not question:
             self.window.toast("물어볼 줄에 커서를 두세요")
             return False
-        return self.window.open_codex_terminal(question)
+        return self.window.open_agent_terminal(question)
 
     def ask_in_chat(self) -> bool:
         """현재 줄을 앱 질문 초안에 옮긴다. 기존 초안을 보존하며 전송하지 않는다."""

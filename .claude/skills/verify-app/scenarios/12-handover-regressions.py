@@ -113,7 +113,7 @@ class Probe(BoraApplication):
 
             notes._buffer.set_text('question\nfollowing paragraph')
             notes._buffer.place_cursor(notes._buffer.get_start_iter())
-            with patch.object(w, 'open_codex_terminal', return_value=True) as launch:
+            with patch.object(w, 'open_agent_terminal', return_value=True) as launch:
                 check('메모 질문을 기본 터미널에 전달', notes.ask_current_line())
                 check('터미널 질문 내용', launch.call_args.args == ('question',))
                 check('질문 전달이 메모를 바꾸지 않음', notes._text() == 'question\nfollowing paragraph')

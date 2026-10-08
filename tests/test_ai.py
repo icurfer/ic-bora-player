@@ -166,3 +166,38 @@ def test_terminal_platform_command_keeps_arguments(tmp_path,monkeypatch):
     monkeypatch.setattr('shutil.which',lambda name:'/usr/bin/gnome-terminal' if name=='gnome-terminal' else None)
     command=terminal_command(['/bin/codex','질문; echo nope'],tmp_path/'a b')
     assert command[-1]=='질문; echo nope' and command[2]==str(tmp_path/'a b')
+
+
+@pytest.mark.parametrize('provider', ['codex', 'claude'])
+def test_workspace_provider_missing_does_not_launch(tmp_path, monkeypatch, provider):
+    from bora.ai import workspace
+    monkeypatch.setattr(workspace, 'terminal_command', lambda _p: None)
+    with pytest.raises(OSError, match='설치 안내'):
+        workspace.launch(tmp_path/'video.mp4', tmp_path/'memo.md', provider=provider)
+
+
+def test_claude_workspace_uses_interactive_cli_and_preserves_arguments(tmp_path, monkeypatch):
+    from bora.ai import workspace
+    folder = tmp_path/'한글 공백 $(touch nope)'; folder.mkdir()
+    note = folder/'메모.md'; note.write_text('기존 메모')
+    calls = []
+    monkeypatch.setattr(workspace, 'terminal_command', lambda p: '/local/claude' if p == 'claude' else None)
+    monkeypatch.setattr(workspace.integration, 'launch_terminal', lambda *args: calls.append(args))
+    for key in ('ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_OAUTH_TOKEN'):
+        monkeypatch.setenv(key, 'test-value')
+    workspace.launch(folder/'영상.mp4', note, question='왜?; echo nope', provider='claude')
+    argv, cwd, env = calls[0]
+    assert argv[0] == '/local/claude' and cwd == folder
+    assert '--print' not in argv and '-p' not in argv
+    assert argv[argv.index('--permission-mode')+1] == 'manual'
+    assert json.loads(argv[argv.index('--settings')+1])['forceLoginMethod'] == 'claudeai'
+    assert '왜?; echo nope' in argv[-1] and str(note) in argv[-1]
+    assert not any(k in env for k in ('ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_OAUTH_TOKEN'))
+    assert note.read_text() == '기존 메모'
+
+
+def test_workspace_rejects_unsaved_note(tmp_path, monkeypatch):
+    from bora.ai import workspace
+    monkeypatch.setattr(workspace, 'terminal_command', lambda _p: '/local/claude')
+    with pytest.raises(OSError, match='저장되지'):
+        workspace.launch(tmp_path/'video.mp4', tmp_path/'missing.md', provider='claude')

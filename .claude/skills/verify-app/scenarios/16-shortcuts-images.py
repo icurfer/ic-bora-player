@@ -24,7 +24,7 @@ import gi
 gi.require_version('Gtk','4.0'); gi.require_version('Gdk','4.0'); gi.require_version('GdkX11','4.0')
 from gi.repository import Gtk, Gdk, GdkX11, GLib
 from bora.app import BoraApplication
-from bora.ai import api, client
+from bora.ai import api, client, workspace
 from PIL import Image
 
 results = []
@@ -142,12 +142,21 @@ class Probe(BoraApplication):
             w.show_chat(); w.present(); pump(.3)
             notes, chat = w._notes, w._chat
             notes._buffer.set_text('메모 질문'); notes.focus_editor(); pump()
-            with patch.object(w,'open_codex_terminal',return_value=True) as terminal:
+            with patch.object(w,'open_agent_terminal',return_value=True) as terminal:
                 keypress(w,['Control_L','Return'])
-                check('실제 메모 CtrlEnter 외부 Codex 호출', terminal.call_count == 1)
+                check('실제 메모 CtrlEnter 외부 터미널 호출', terminal.call_count == 1)
                 keypress(w,['Control_L','Shift_L','Return'])
                 check('메모 CtrlShiftEnter가 기본 호출 안 함', terminal.call_count == 1)
                 check('메모 CtrlShiftEnter는 앱 질문 초안', chat._text(chat._input.get_buffer()) == '메모 질문' and not requests)
+            notes._terminal_choices['claude'].set_active(True)
+            notes._buffer.set_text('Claude 질문 전달'); notes.focus_editor(); pump()
+            with patch.object(workspace, 'terminal_command', return_value='/mock/claude'), patch.object(workspace, 'launch') as launch:
+                keypress(w,['Control_L','Return'])
+                check('실제 CtrlEnter 선택한 Claude 터미널 호출', wait_for(lambda: launch.call_count == 1)
+                      and launch.call_args.kwargs.get('provider') == 'claude')
+                check('Claude에 현재 줄 전달 전 메모 저장', launch.call_args.args[3] == 'Claude 질문 전달'
+                      and 'Claude 질문 전달' in notes.doc.path.read_text())
+            notes._terminal_choices['codex'].set_active(True)
             notes.focus_editor(); pump()
             with patch.object(notes,'insert_screenshot') as capture:
                 keypress(w,['Control_L','Shift_L','S'])

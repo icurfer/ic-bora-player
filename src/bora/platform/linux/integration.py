@@ -136,7 +136,14 @@ def terminal_command(argv, cwd):
 def launch_terminal(argv, cwd, env):
     import subprocess
     # gnome-terminal 서버에 환경변수를 명시 전달하여 API 키를 상속하지 않는다.
-    clean = ['env', '-u', 'OPENAI_API_KEY', '-u', 'CODEX_API_KEY', '-u', 'OPENAI_BASE_URL', *argv]
+    unset = ('OPENAI_API_KEY', 'CODEX_API_KEY', 'OPENAI_BASE_URL',
+             'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL',
+             'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX',
+             'CLAUDE_CODE_USE_FOUNDRY', 'CLAUDE_CODE_OAUTH_TOKEN')
+    clean = ['env']
+    for key in unset:
+        clean.extend(['-u', key])
+    clean.extend(argv)
     process = subprocess.Popen(terminal_command(clean, cwd), cwd=cwd, env=env,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:

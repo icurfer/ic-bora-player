@@ -154,7 +154,7 @@ bash /usr/share/doc/bora/install-stt.sh   # 음성 텍스트 추출
 선택될 뿐 재생은 이어진다. 지운 구간을 지날 때는 화면이 검게 덮인다.
 
 메모 안에서: `Ctrl+T` 현재 시각 · `Ctrl+Shift+S` 영상 캡처 넣기 · `Ctrl+S` 저장.
-`Ctrl+Enter`는 현재 줄로 Codex 터미널 열기, `Ctrl+Shift+Enter`는 앱 AI 질문 초안에 넣기(자동 전송 없음).
+`Ctrl+Enter`는 현재 줄로 선택한 외부 터미널 열기, `Ctrl+Shift+Enter`는 앱 AI 질문 초안에 넣기(자동 전송 없음).
 AI 질문 입력에서 `Ctrl+Enter` 보내기, `Enter` 줄바꿈. `Ctrl+M` 메모·AI 패널 열기/닫기.
 메모 도구줄의 키보드 아이콘에서 단축키를 확인할 수 있다.
 
@@ -184,3 +184,17 @@ bash scripts/setup-claude-memory.sh  # 메모리를 git 으로 관리
 Codex는 [AGENTS.md](AGENTS.md), Claude는 [CLAUDE.md](CLAUDE.md)를 읽는다.
 두 도구의 공통 기준은 [릴리스 정책](docs/RELEASING.md)이다.
 일반 코드·문서 커밋에는 버전 증가가 필요 없다. 변경은 Unreleased에 모으고 릴리스 단위로 결정한다.
+
+### 메모에서 Claude Code 사용
+
+메모 상단 **Codex ▾** 메뉴에서 **Claude Code**를 선택한 뒤 **현재 줄로 열기** 또는
+**메모 폴더에서 열기**를 누른다. 메모 입력 중 `Ctrl+Enter`도 선택한 도구로 질문을 전달한다.
+선택은 다음 실행에도 유지된다. 기본값은 Codex다.
+
+Claude Code 실행 파일은 별도로 설치한다. 미설치 상태에서는 메뉴의 설치 안내를 이용한다.
+원본 Claude Code 터미널이 메모 폴더에서 열리고 사용자가 직접 로그인·질문·편집한다.
+Bora는 Claude 로그인 자격증명을 수집하지 않는다. 사용 한도와 인증 방식은 Claude Code에서 확인한다.
+현재 검토한 로컬 CLI는 2.1.289이며, 실행 옵션 오류가 나오면 공식 안내에 따라 업데이트한다.
+
+실행 전에 메모를 저장하며, 외부 변경과 앱 편집이 겹치면 실행/자동 저장을 막아 내용을 보존한다.
+이 선택은 아래쪽 앱 AI 대화의 Codex/OpenAI API 설정과 별개다. Claude 앱 내부 대화는 제공하지 않는다.

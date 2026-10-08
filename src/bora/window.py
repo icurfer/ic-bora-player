@@ -751,10 +751,20 @@ class BoraWindow(Adw.ApplicationWindow):
         log.debug("메모 패널: %s", want)
 
     def open_codex_terminal(self, question=None):
+        """기존 호출자를 위한 Codex 명시 실행."""
+        return self.open_agent_terminal(question, provider='codex')
+
+    def open_agent_terminal(self, question=None, provider=None):
+        from .ai.workspace import PROVIDERS, terminal_command
+        provider = provider or self.state.settings.terminal_provider
+        title = PROVIDERS[provider]
         if self._current is None:
             self.toast("영상을 먼저 열어 주세요")
             return False
         self.toggle_notes(True)
+        if not terminal_command(provider):
+            self.toast(f"{title}가 설치되지 않았습니다. 메모 상단 도구 메뉴의 설치 안내를 확인하세요.")
+            return False
         if (self._notes.doc is None
                 or self._notes.doc.path != NoteDocument.path_for(self._current)):
             return False
@@ -764,13 +774,13 @@ class BoraWindow(Adw.ApplicationWindow):
         import threading
         video, note = self._current, self._notes.doc.path
         subtitle = self._plan.source if self._plan else None
-        self.toast("메모 폴더에서 Codex 터미널을 여는 중…")
+        self.toast(f"메모 폴더에서 {title} 터미널을 여는 중…")
         def run():
             try:
-                launch(video, note, subtitle, question)
-                message = "Codex 터미널을 열었습니다. 파일 변경은 보라로 돌아오면 확인합니다."
+                launch(video, note, subtitle, question, provider=provider)
+                message = f"{title} 터미널을 열었습니다. 파일 변경은 보라로 돌아오면 확인합니다."
             except (OSError, RuntimeError):
-                message = "Codex 터미널을 열지 못했습니다. Codex와 터미널 설치를 확인하세요."
+                message = f"{title} 터미널을 열지 못했습니다. 도구와 터미널 설치를 확인하세요."
             GLib.idle_add(self.toast, message)
         threading.Thread(target=run, daemon=True).start()
         return True
@@ -1437,8 +1447,8 @@ class BoraWindow(Adw.ApplicationWindow):
 
         box.append(self._menu_row("학습 메모", "Ctrl+M", self.toggle_notes,
                                   "열려 있다" if self._notes_open else "영상 옆 .md 에 기록"))
-        box.append(self._menu_row("Codex와 파일 작업", "", self.open_codex_terminal,
-                                  "메모 폴더에서 터미널 열기 · 기본"))
+        box.append(self._menu_row("외부 터미널로 파일 작업", "", self.open_agent_terminal,
+                                  "메모 상단에서 선택한 Codex / Claude Code"))
         box.append(self._menu_row("AI 대화", "", self.show_chat,
                                   "현재 영상에 대해 물어보기"))
         box.append(self._menu_row("AI 연결 · 로그인/API 키", "", self.show_ai_settings,

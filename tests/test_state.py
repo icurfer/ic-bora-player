@@ -152,3 +152,14 @@ def test_corrupt_recent_records_and_pins_are_skipped(tmp_path):
     assert list(state.recent) == ['good']
     assert state.recent['good'].pins[0]['start'] == 2
     assert len(state.recent['good'].pins) == 1
+
+
+def test_terminal_provider_persists_and_invalid_value_defaults(tmp_path):
+    state = State(tmp_path)
+    state.settings.terminal_provider = 'claude'
+    state.save()
+    assert State(tmp_path).settings.terminal_provider == 'claude'
+    raw = json.loads(state.path.read_text())
+    raw['settings']['terminal_provider'] = 'unknown'
+    state.path.write_text(json.dumps(raw))
+    assert State(tmp_path).settings.terminal_provider == 'codex'

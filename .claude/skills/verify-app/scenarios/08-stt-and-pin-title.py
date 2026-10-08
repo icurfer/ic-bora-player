@@ -146,7 +146,7 @@ def main() -> int:
                 before = panel._text()
                 # 실제 자격 증명이 있어도 자동 검증에서 유료 요청을 보내지 않는다.
                 from unittest.mock import patch
-                with patch.object(win, "open_codex_terminal", return_value=True) as launch:
+                with patch.object(win, "open_agent_terminal", return_value=True) as launch:
                     asked = panel.ask_current_line()
                 check("A2 기본 Codex 터미널에 질문 전달", asked is True and launch.called)
                 check("A2 메모를 건드리지 않는다", panel._text() == before)
