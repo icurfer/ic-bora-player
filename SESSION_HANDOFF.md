@@ -1,3 +1,11 @@
+## 최신 GitHub CI 확인 (2026-10-09)
+
+- 사용자 요청: 패키지는 로컬이 아닌 GitHub 서버에서 검사·빌드·업로드한다.
+- c324457의 [CI 실행](https://github.com/icurfer/ic-bora-player/actions/runs/37802274775)이 성공했다.
+- 전체 pytest, deb 빌드, apt 설치, 버전 검사, development-deb 업로드 성공.
+- Actions artifact는 14일 보관. 정식 출시 태그에는 Draft Release 생성 workflow가 별도로 있다.
+- 실제 출시 태그 발행과 사용자 환경 GUI E2E는 미완료다. 기존 설치본은 이 작업에서 변경하지 않았다.
+
 # 현재 인계 — 2026-10-09 버전 정책 전환
 
 이 아래의 2026-10-08 기록은 과거 상태다. 현재 기준은 다음과 같다.

@@ -33,7 +33,17 @@ GitHub의 공개 Release는 조회 당시 없었지만, 과거 Git에 공개한 
 
 사용자가 비용·업로드 방식을 확인한 뒤 GitHub 서버에서 검사·빌드·업로드하도록 요청했다.
 CI와 출시 태그의 Draft Release를 구성한다. 로컬 deb 빌드는 수행하지 않는다.
-실제 실행 결과는 원격 검증 후 기록한다.
+실제 원격 검증 결과는 아래에 기록한다.
 
 첫 원격 실행에서 미등록 .desktop의 GIO NULL 반환이 TypeError가 되어 실패했다.
 미설치 상태를 None으로 처리하고 실제 GIO를 사용하는 회귀 검사를 추가했다.
+
+## 원격 실행 확인
+
+- 소스 커밋: c324457. GitHub Actions 실행: https://github.com/icurfer/ic-bora-player/actions/runs/37802274775
+- 정책 검사와 전체 pytest 통과, GitHub 서버에서 deb 빌드·apt 설치·설치본 버전 일치 확인 성공.
+- development-deb artifact 업로드 성공: ID 11561552119, 105933 bytes, 보존 14일.
+- artifact에는 deb와 SHA256SUMS가 포함된다. 로컬 패키지 빌드·설치는 수행하지 않았다.
+- CI 버전 비교의 셸 tilde 확장 문제를 수정했고, 패키지 다운로드 재시도/시간 제한을 추가했다.
+- 출시 태그의 Draft Release workflow도 구성했으나, 실제 정식 태그/Release 발행은 하지 않았다.
+- CI 단위 검사와 패키지 설치는 사용자 환경의 재생·단축키 GUI E2E 통과를 뜻하지 않는다.
