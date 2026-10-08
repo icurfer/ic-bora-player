@@ -1,3 +1,12 @@
+## 최신 기능 확인: Claude Code 외부 터미널 (2026-10-09)
+
+- 메모 상단 Codex ▾에서 Claude Code 선택. Ctrl+Enter 또는 메뉴 실행. 선택은 state.json에 보존.
+- 앱 내부 대화 제공자는 기존 Codex/OpenAI API 유지. Claude 로그인과 승인은 원본 CLI가 처리.
+- 소스 c88e77d, [CI 성공](https://github.com/icurfer/ic-bora-player/actions/runs/37811138840), artifact development-deb(14일).
+- 단위/GTK 276개, 격리 Xvfb 실제 Ctrl+Enter 시나리오17 10항목 통과. CLI/API는 모의 실행.
+- 독립 UI: 실제 GTK 어두운 테마, 패널352px·메뉴311px 잘림 없음. 검토창 종료.
+- 실제 사용자 Claude 로그인/응답/OS 터미널 실행은 미검증. 로컬 빌드·설치하지 않음.
+
 ## 최신 GitHub CI 확인 (2026-10-09)
 
 - 사용자 요청: 패키지는 로컬이 아닌 GitHub 서버에서 검사·빌드·업로드한다.

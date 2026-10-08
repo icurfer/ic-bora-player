@@ -14,4 +14,14 @@ bora-ui-review를 적용한 별도 검토 에이전트가 격리된 실제 GTK �
 
 전체 단위/GTK 통합 검사 276개 통과. Claude Code 2.1.289에서 실행 옵션을 --version으로 검사했다(모델 호출 없음).
 로컬 시나리오16은 검증창의 X11 포커스 불일치로 키 주입 전에 중단했다. 실제 키 검증은 격리된 CI에서 별도 수행한다.
-GitHub CI 결과는 실행 후 기록한다. 로컬 deb 빌드·설치는 하지 않는다.
+GitHub CI 결과는 아래에 기록한다. 로컬 deb 빌드·설치는 하지 않는다.
+
+## 원격 검증 완료
+
+- 커밋 c88e77d의 [GitHub 실행](https://github.com/icurfer/ic-bora-player/actions/runs/37811138840) 성공.
+- 전체 단위/GTK 통합 검사, 시나리오17 실제 XTest Ctrl+Enter 10항목 성공.
+- 시나리오17은 격리 Xvfb에서 Claude/Codex 선택별 질문 전달·실행 전 저장·선택 기억·중복 실행을 검사했다.
+- 실제 CLI/API 호출은 모의 처리. 사용자 로그인·모델 응답·실제 OS 터미널 창은 미검증이다.
+- GitHub 서버에서 deb 빌드·apt 설치·설치 버전 검증·development-deb 업로드 성공.
+- artifact ID 11564189351, 107261 bytes, deb와 SHA256SUMS 포함, 14일 보관.
+- 로컬 검토창과 시나리오 프로세스 종료 확인. 로컬 설치본은 변경하지 않았다.
