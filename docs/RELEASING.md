@@ -49,15 +49,15 @@ Python 패키징 도구는 PEP 440에 따라 `1.2.3rc1`처럼 정규화할 수 �
 ## 개발과 배포 절차
 
 1. 일반 커밋/PR: 코드와 관련 기록을 수정하고 검증한다. 제품 변경은 CHANGELOG Unreleased에 추가한다.
-   문서만 수정하면 제품 버전을 바꾸지 않는다. CI는 push/PR에서 실행한다.
+   문서만 수정하면 제품 버전을 바꾸지 않는다. 검사는 로컬에서 직접 실행한다. GitHub Actions CI/CD는 사용하지 않는다.
 2. 로컬 빌드: `bash scripts/build-deb.sh`. 커밋 식별자가 붙은 개발 패키지가 생성된다.
 3. 릴리스 준비: 버전 확정, `CHANGELOG.md`에 `## [버전]` 항목과 날짜, 아래 검증 기록을 작성한다.
 4. 실제 지원 환경에서 단위·GUI E2E·설치/재실행을 검증한다. 모의 API와 실제 유료 응답은 구분한다.
    GTK 초기화 실패나 처리 함수 직접 호출은 실제 키입력 E2E 통과가 아니다.
 5. 커밋·push 후 깨끗한 커밋에 `git tag -a v<버전> -m 'Bora <버전>'`, `git push origin v<버전>`.
-6. 태그 workflow는 버전·기록·단위 검사 후 패키지와 SHA256SUMS를 **Draft Release**에 첨부한다.
-   실제 화면 검증은 호스팅 CI의 가상 화면 단위 검사로 대체하지 않는다.
-7. 릴리스 담당자는 draft의 검증 결과·패키지·후보 표시를 확인하고 공개한다. dev 버전은 릴리스하지 않는다.
+6. 로컬에서 `bash scripts/build-deb.sh --release`로 패키지를 만들고 설치·재실행을 확인한다.
+   배포할 파일의 SHA256 체크섬을 생성하고, GitHub Releases에서 해당 태그를 선택해 패키지와 함께 직접 첨부한다.
+7. 검증 결과·패키지·후보 표시를 확인하고 Release를 공개한다. dev 버전은 릴리스하지 않는다.
 
 `docs/releases/<버전>.md`에는 사용자용 변경 내역과 설치 방법 외에 다음 상태와 구체적인 근거를 적는다.
 
@@ -76,7 +76,7 @@ Platform: Ubuntu 26.04
 
 소스·빌드 스크립트·문서만 Git에 보관한다. 새 `.deb` 등 설치 파일은 dist에 생성하되 추적하지 않는다.
 정식 설치 파일은 [GitHub Releases](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases)
-첨부로 제공하고, 일반 개발 CI 산출물은 보존 기간이 있는 Actions artifact로 제공한다.
+첨부로 직접 올린다. 개발 빌드 산출물은 로컬 dist에 보관한다.
 공개한 태그나 같은 버전의 파일을 교체하지 않는다. 문제가 있으면 새 버전을 낸다.
 
 ## 2026-10-09 전환 기록
