@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- OS 공통 UI·UX 관리 검토 문서 추가: 공통 GTK 화면 유지, 스타일·액션·OS별 실측 기준 권고. UI 구현 변경은 없음.
+
 - Windows 실행 보완: WGL/EGL 조회, uchardet DLL 탐색, Python/GIO 명령줄, MSYS2 venv 경로, PowerShell 외부 터미널과 개발 실행 스크립트. 현재 Windows PC에서 실제 재생·하드웨어 디코딩·자막·메모·클립 검증. 전체 Windows 지원·IME·배포는 미완료.
 
 - ic-praxis 개발 하네스 적용: 작업별 검사·검증 만료·인덱스 일치 검사 및 기존 CI 연결.
