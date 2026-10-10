@@ -1,3 +1,12 @@
+## 최신 지침: ic-praxis 개발 하네스 (2026-10-10)
+
+- upstream 96aa5b13, development 적용. AGENTS/CLAUDE 공통 작업 하네스 절차를 따른다.
+- 새 작업은 .claude/commands/praxis-task.md와 harness/README.md 참조.
+- 의도한 파일만 검토해 stage 후 task validate. 파일/인덱스/HEAD 변경 시 이전 검증 만료.
+- 개인 레코드 harness/.state는 Git 제외. adopt-praxis-harness 기록 보존.
+- 기존 버전 정책과 GitHub 패키지 빌드/업로드 유지. 원본 매커밋 bump 규칙은 가져오지 않음.
+- [98b9e87 CI 성공](https://github.com/icurfer/ic-bora-player/actions/runs/38018605017): 하네스 검사·앱 테스트·키입력 시나리오·deb 업로드 성공.
+
 ## 최신 기능 확인: Claude Code 외부 터미널 (2026-10-09)
 
 - 메모 상단 Codex ▾에서 Claude Code 선택. Ctrl+Enter 또는 메뉴 실행. 선택은 state.json에 보존.

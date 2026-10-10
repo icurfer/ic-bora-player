@@ -19,4 +19,9 @@ harness/UPSTREAM_LICENSE에 보존했다.
 
 하네스 회귀 9개 통과, 원본 praxis-gate.yml 전용 검사 1개는 Bora에 해당 workflow가 없어 skip.
 실제 작업 레코드 adopt-praxis-harness를 생성하고 기획서와 범위를 연결했다.
-최종 하네스 검증과 원격 CI 결과는 작업 후 기록한다.
+로컬 task validate 통과: 하네스 9개(1개 skip), Python/GTK 276개.
+커밋 후 task status가 stale로 전환됨을 확인했다. 개인 레코드는 git check-ignore로 제외 확인.
+GitHub 커밋 98b9e87의 [CI 실행](https://github.com/icurfer/ic-bora-player/actions/runs/38018605017) 성공:
+하네스 init/check/validate/status, 키입력 시나리오17, deb 빌드·apt 설치·버전 검사·artifact 업로드 통과.
+artifact development-deb ID 11657726516, 107449 bytes, 14일 보관.
+로컬 패키지 빌드/설치와 정식 태그/Release 발행은 수행하지 않았다.
