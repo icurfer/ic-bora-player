@@ -21,3 +21,6 @@ build/
 
 # 설치 패키지는 GitHub Releases 첨부로 배포한다. 과거 이력은 재작성하지 않는다.
 /dist/
+
+# 개인 작업 기록과 검증 결과
+/harness/.state/

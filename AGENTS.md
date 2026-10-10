@@ -83,6 +83,15 @@ libmpv 를 재생 엔진으로 쓰는 GTK 프론트엔드. 국내 자막(CP949 �
   (why: 엉뚱한 곳이 같이 치환돼 파일이 깨진 적이 있다.)
 - **진단을 건너뛰는 "빠른 수정"을 제안하지 않는다** — 진단 → 기획 → 구현 순서를 지킨다.
 
+## 작업 하네스
+
+- `harness/config/profile.json`은 개발용(`development`)이다. Node.js 18+와 Git이 필요하며 npm 설치는 없다.
+- 새 작업은 `.claude/commands/praxis-task.md` 절차로 `task init → check → validate → status`를 사용한다. Codex는 `.agents/skills/praxis-task/SKILL.md`를 진입점으로 쓴다.
+- 큰 변경은 기존 spec/scope 문서를 `--plan`으로 연결한다. 설정은 `harness/config/project.json`, 개인 기록은 Git에서 제외한 `harness/.state/`에 둔다.
+- 검증 전 의도한 파일만 검토해 stage한다. 인덱스와 검사 대상의 차이, 빈 검사, 실패, 시간 초과는 통과가 아니다.
+- 파일·인덱스·HEAD가 바뀌면 이전 결과는 만료된다. 커밋 뒤에도 현재 상태 검증이 필요하면 다시 validate한다.
+- 하네스는 로컬 검증 도구이며 자동 커밋·배포 도구가 아니다. 버전 정책과 기존 GitHub CI의 패키지 빌드·업로드를 유지한다. 단위 검사를 GUI E2E로 보고하지 않는다.
+
 ## 자동 게이트
 위 규칙 중 기계로 검사 가능한 것은 커밋 시점에 강제된다:
 `.githooks/pre-commit` → `scripts/check-conventions.sh`.

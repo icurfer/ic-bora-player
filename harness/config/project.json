@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "checks": [
+    {
+      "name": "index matches inputs",
+      "command": [
+        "bash",
+        "scripts/check-index-clean.sh"
+      ],
+      "timeoutSeconds": 30
+    },
+    {
+      "name": "repository conventions",
+      "command": [
+        "bash",
+        "scripts/check-conventions.sh",
+        "--all"
+      ],
+      "timeoutSeconds": 120
+    },
+    {
+      "name": "harness regressions",
+      "command": [
+        "node",
+        "--test",
+        "harness/test/cli.test.mjs",
+        "harness/test/index.test.mjs",
+        "harness/test/runner.test.mjs"
+      ],
+      "timeoutSeconds": 180
+    },
+    {
+      "name": "Bora unit and GTK integration",
+      "command": [
+        "bash",
+        "scripts/check-python-tests.sh"
+      ],
+      "timeoutSeconds": 300
+    }
+  ]
+}
