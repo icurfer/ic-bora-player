@@ -40,6 +40,11 @@ from __future__ import annotations
 from pathlib import Path
 
 
+def uchardet_library() -> str:
+    import ctypes.util
+    return ctypes.util.find_library("uchardet") or "libuchardet.so.0"
+
+
 # ── integration 의 기본값 — 지원하지 않는 플랫폼은 이것을 그대로 쓴다 ──────────
 def can_set_default() -> bool:
     return False

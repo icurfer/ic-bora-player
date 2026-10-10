@@ -42,7 +42,8 @@ def test_install_hint_names_the_script() -> None:
 
 
 def test_venv_path_is_inside_repo() -> None:
-    assert venv_python().name == "python"
+    from bora.platform import paths
+    assert venv_python().name == paths.venv_python(Path('.venv-stt')).name
     assert ".venv-stt" in str(venv_python())
 
 

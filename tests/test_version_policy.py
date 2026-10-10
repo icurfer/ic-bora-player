@@ -25,6 +25,8 @@ def test_invalid(value):
 
 def test_debian_candidate_sorts_before_final():
     assert policy.debian('1.2.3-rc.1') == '1.2.3~rc.1'
+    if not shutil.which('dpkg'):
+        pytest.skip('Debian 정렬 통합 검사는 dpkg 필요')
     subprocess.run(['dpkg', '--compare-versions', policy.debian('1.2.3-rc.1'), 'lt', '1.2.3'], check=True)
     subprocess.run(['dpkg', '--compare-versions', policy.debian('1.2.3-dev.1'), 'lt', policy.debian('1.2.3-rc.1')], check=True)
 

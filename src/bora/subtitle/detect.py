@@ -12,9 +12,9 @@ docs/research/2026-09-13-mpv-playback-path-tests.md §2 의 실측으로 확정�
 from __future__ import annotations
 
 import ctypes
-import ctypes.util
 import re
 from dataclasses import dataclass
+from ..platform import uchardet_library
 
 # uchardet 이 지목하면 그대로 믿는 CJK 계열. 한글 비율로 뒤집지 않는다.
 CJK_TRUSTED: dict[str, str] = {
@@ -69,7 +69,7 @@ def strip_markup(raw: bytes) -> bytes:
 
 
 def _load_uchardet():
-    path = ctypes.util.find_library("uchardet") or "libuchardet.so.0"
+    path = uchardet_library()
     lib = ctypes.CDLL(path)
     lib.uchardet_new.restype = ctypes.c_void_p
     lib.uchardet_get_charset.restype = ctypes.c_char_p

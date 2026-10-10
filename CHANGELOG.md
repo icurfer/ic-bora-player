@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Windows 실행 보완: WGL/EGL 조회, uchardet DLL 탐색, Python/GIO 명령줄, MSYS2 venv 경로, PowerShell 외부 터미널과 개발 실행 스크립트. 현재 Windows PC에서 실제 재생·하드웨어 디코딩·자막·메모·클립 검증. 전체 Windows 지원·IME·배포는 미완료.
+
 - ic-praxis 개발 하네스 적용: 작업별 검사·검증 만료·인덱스 일치 검사 및 기존 CI 연결.
 
 - 메모에서 Codex/Claude Code 외부 터미널 선택, 선택 기억, 현재 줄 질문 전달과 설치 안내 추가.

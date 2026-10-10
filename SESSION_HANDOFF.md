@@ -1,3 +1,17 @@
+## 현재 인계: Windows 실제 실행 반복 검증 (2026-10-10)
+
+- `AGENTS.md`가 실제 파일 이름이다. `AGENT.md`는 없다. 릴리스 정책과 praxis-task 절차를 읽었다.
+- Windows GL/FBO·PowerShell 외부 터미널·uchardet DLL·MSYS2 venv·Python/GIO 명령줄 보완.
+- [실측 기록](docs/research/2026-10-10-windows-runtime.md), [기획](docs/spec/windows-runtime.md).
+- 사용자 로컬 `%LOCALAPPDATA%/BoraDev/msys64`에 MSYS2 UCRT64 GTK4/libadwaita/libmpv/ffmpeg/Python/pytest를 설치했다. python-mpv는 별도 `BoraDev/python-packages`. 시스템 PATH 변경 없음.
+- 실제 재생 스파이크: WGL 컨텍스트, 5초 150프레임, 시각4.57→9.60초, d3d11va-copy 확인. 자막 T1~T4, 메모14·클립8항목 통과. 일반 개발 런처에서 한글/공백 영상+CP949 자막 표시 및 창 종료 확인.
+- 전체 Python 검사284 통과·6 환경 전용 검사 건너뜀. 하네스8 통과·2 플랫폼 전용 건너뜀. 실제 GIO argv 회귀2 및 PowerShell 인자 전달 포함.
+- 전체 Windows 지원은 아직 미완료. `platform.verified()`와 버전 유지. IME/실제 키입력/Win10/portable 설치/Linux GUI 회귀는 남음.
+- 실행: `powershell -NoProfile -File src/bora/platform/windows/run.ps1 "영상 경로"`.
+- 스파이크의 중첩 이벤트 루프와 시나리오06/09 대기 루프를 보완했다. 검증이 만든 스크립트 옆 메모는 삭제했다.
+- exe/ps1 터미널 실행만 구현. cmd/bat는 안전한 전달 검증 전까지 명시적으로 거절한다.
+- 전체 하네스 결과와 커밋 상태는 docs/done/windows-runtime-20261010.md 및 git status로 확인한다.
+
 ## 최신 지침: ic-praxis 개발 하네스 (2026-10-10)
 
 - upstream 96aa5b13, development 적용. AGENTS/CLAUDE 공통 작업 하네스 절차를 따른다.

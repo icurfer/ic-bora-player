@@ -91,6 +91,7 @@ def test_is_default_checks_main_types(monkeypatch) -> None:
     assert desktop.is_default() is False
 
 
+@pytest.mark.skipif(not hasattr(desktop.Gio, 'DesktopAppInfo'), reason="Linux DesktopAppInfo 필요")
 def test_missing_desktop_entry_is_normal_uninstalled_state(monkeypatch) -> None:
     # 실제 GIO 생성자를 호출해 NULL 반환을 예외로 바꾸는 바인딩도 검증한다.
     monkeypatch.setattr(desktop, "APP_DESKTOP_ID", "com.icurfer.Bora.NonexistentTest.desktop")

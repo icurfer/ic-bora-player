@@ -71,15 +71,27 @@ def test_paths_are_absolute_and_under_one_root() -> None:
         assert path.name == "bora" or "bora" in str(path), path
 
 
-def test_windows_venv_layout_differs() -> None:
+def test_windows_venv_layout_differs(monkeypatch) -> None:
     """윈도우만 Scripts/ 다. 이걸 틀리면 선택 기능이 조용히 안 뜬다."""
     from bora.platform.linux import paths as lin
     from bora.platform.windows import paths as win
+    monkeypatch.setattr(win.sysconfig, 'get_platform', lambda: 'win-amd64')
     venv = Path("/x/.venv")
     assert lin.venv_python(venv).name == "python"
     assert win.venv_python(venv).name == "python.exe"
     assert "Scripts" in str(win.venv_python(venv))
     assert "bin" in str(lin.venv_python(venv))
+
+
+def test_windows_msys_venv_layout(monkeypatch, tmp_path) -> None:
+    from bora.platform.windows import paths as win
+    monkeypatch.setattr(win.sysconfig, 'get_platform', lambda: 'mingw_x86_64_ucrt_gnu')
+    assert win.venv_python(tmp_path) == tmp_path / 'bin/python.exe'
+    assert win.venv_pip(tmp_path) == tmp_path / 'bin/pip.exe'
+    native = tmp_path / 'Scripts/python.exe'
+    native.parent.mkdir()
+    native.touch()
+    assert win.venv_python(tmp_path) == native
 
 
 @pytest.mark.parametrize("plat", ("windows", "macos", "android"))
@@ -91,6 +103,7 @@ def test_unsupported_platforms_explain_themselves(plat) -> None:
     assert reason and len(reason) > 10, f"{plat}: 이유가 비었다"
 
 
+@pytest.mark.skipif(not P.IS_LINUX, reason="실제 Linux GIO 등록 상태 검사")
 def test_linux_can_set_default() -> None:
     from bora.platform.linux import integration as lin
     assert callable(lin.can_set_default)

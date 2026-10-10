@@ -12,9 +12,10 @@ from gi.repository import Adw, Gio  # noqa: E402
 
 from . import APP_ID  # noqa: E402
 from .window import BoraWindow  # noqa: E402
+from . import platform  # noqa: E402
 
 
-class BoraApplication(Adw.Application):
+class BoraApplication(platform.application_base()):
     def __init__(self, non_unique: bool = False) -> None:
         """non_unique=True 면 이미 떠 있는 인스턴스와 합쳐지지 않고 제 창을 띄운다.
 

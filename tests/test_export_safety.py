@@ -31,7 +31,12 @@ def test_source_cannot_be_export_target(video, alias):
     if alias in ('symlink', 'hardlink'):
         output = video.with_name('alias.mp4')
         if alias == 'symlink':
-            output.symlink_to(video)
+            try:
+                output.symlink_to(video)
+            except OSError as exc:
+                if getattr(exc, 'winerror', None) == 1314:
+                    pytest.skip('Windows 파일 symlink 권한 필요')
+                raise
         else:
             output.hardlink_to(video)
     elif alias == 'numbered':

@@ -52,7 +52,9 @@ def wait_until(cond, timeout: float) -> bool:
     ctx = GLib.MainContext.default()
     end = time.monotonic() + timeout
     while time.monotonic() < end:
-        while ctx.pending():
+        for _ in range(20):
+            if not ctx.pending():
+                break
             ctx.iteration(False)
         if cond():
             return True

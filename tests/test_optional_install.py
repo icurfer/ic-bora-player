@@ -5,11 +5,13 @@ import subprocess
 
 import pytest
 from bora.stt import install
+from bora import platform
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.parametrize('kind,module,folder', [('stt', install, '.venv-stt')])
+@pytest.mark.skipif(not platform.IS_LINUX, reason="Linux 설치 스크립트 계약")
 def test_installed_script_and_runtime_agree(tmp_path, monkeypatch, kind, module, folder):
     data = tmp_path / 'data with spaces'
     monkeypatch.setattr(module, 'repo_root', lambda: data / 'bora')
@@ -26,8 +28,8 @@ def test_development_venv_and_user_fallback(tmp_path, monkeypatch, module, folde
     user = tmp_path / 'user'
     monkeypatch.setattr(module, 'repo_root', lambda: repo)
     monkeypatch.setattr(module.platform_paths, 'data_dir', lambda: user)
-    assert module.venv_python() == user / folder / 'bin/python'
-    local = repo / folder / 'bin/python'
+    assert module.venv_python() == module.platform_paths.venv_python(user / folder)
+    local = module.platform_paths.venv_python(repo / folder)
     local.parent.mkdir(parents=True)
     local.touch()
     assert module.venv_python() == local

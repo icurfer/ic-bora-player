@@ -62,7 +62,23 @@ elif IS_MAC:                                        # pragma: no cover
 else:
     from .linux import gl, integration, paths
 
+if IS_WINDOWS:
+    from .windows.libraries import uchardet_library
+else:
+    from .base import uchardet_library
+
+
+def application_base():
+    if IS_WINDOWS:
+        from .windows.application import WindowsApplication
+        return WindowsApplication
+    import gi
+    gi.require_version("Adw", "1")
+    from gi.repository import Adw
+    return Adw.Application
+
 __all__ = [
     "IS_ANDROID", "IS_LINUX", "IS_MAC", "IS_WINDOWS",
-    "gl", "integration", "name", "paths", "verified",
+    "gl", "integration", "name", "paths", "verified", "uchardet_library",
+    "application_base",
 ]

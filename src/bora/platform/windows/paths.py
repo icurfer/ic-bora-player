@@ -7,6 +7,7 @@ venv 레이아웃만 posix 와 다르다 — `Scripts/python.exe`.
 from __future__ import annotations
 
 import os
+import sysconfig
 from pathlib import Path
 
 import gi  # noqa: F401
@@ -30,9 +31,18 @@ def data_dir() -> Path:
     return Path(GLib.get_user_data_dir()) / APP
 
 
+def _scripts_dir(venv: Path) -> Path:
+    for folder in ("Scripts", "bin"):
+        if (venv / folder / "python.exe").is_file():
+            return venv / folder
+    # MSYS2도 Windows 네이티브 Python이지만 venv에는 bin을 사용한다.
+    folder = "bin" if sysconfig.get_platform().startswith("mingw") else "Scripts"
+    return venv / folder
+
+
 def venv_python(venv: Path) -> Path:
-    return venv / "Scripts" / "python.exe"
+    return _scripts_dir(venv) / "python.exe"
 
 
 def venv_pip(venv: Path) -> Path:
-    return venv / "Scripts" / "pip.exe"
+    return _scripts_dir(venv) / "pip.exe"

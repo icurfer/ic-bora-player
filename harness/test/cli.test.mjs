@@ -94,7 +94,7 @@ test('locks and symlinked state prevent writes outside the repo', t => {
   fs.mkdirSync(path.join(f.root, 'harness/.state/lock')); f.cli(['task', 'init', 'other', '--title', 'Other'], 1);
   fs.rmSync(path.join(f.root, 'harness/.state'), { recursive: true });
   const outside = path.join(f.base, 'outside'); fs.mkdirSync(outside);
-  fs.symlinkSync(outside, path.join(f.root, 'harness/.state'), 'dir');
+  fs.symlinkSync(outside, path.join(f.root, 'harness/.state'), 'junction');
   f.cli(['task', 'init', 'other', '--title', 'Other'], 1);
   assert.deepEqual(fs.readdirSync(outside), []);
 });

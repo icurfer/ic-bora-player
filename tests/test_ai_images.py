@@ -46,7 +46,12 @@ def test_symlink_escape(note, tmp_path):
     target = tmp_path.parent / (tmp_path.name + '-outside.png')
     target.write_bytes(PNG)
     try:
-        (tmp_path / 'link.png').symlink_to(target)
+        try:
+            (tmp_path / 'link.png').symlink_to(target)
+        except OSError as exc:
+            if getattr(exc, 'winerror', None) == 1314:
+                pytest.skip('Windows 파일 symlink 권한 필요')
+            raise
         with pytest.raises(ImageError):
             find_images('![image](link.png)', note)
     finally:

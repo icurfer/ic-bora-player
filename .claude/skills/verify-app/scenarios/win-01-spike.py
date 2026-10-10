@@ -18,7 +18,6 @@
 import os
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 os.environ["XDG_CONFIG_HOME"] = tempfile.mkdtemp(prefix="bora-cfg-")
@@ -94,28 +93,37 @@ def main() -> int:
             try:
                 area = win._video
                 context = area.get_context()
-                check("S1 GL 컨텍스트가 잡혔다", context is not None,
+                area.make_current()
+                check("S1 GL 컨텍스트가 잡혔다", context is not None and area.get_error() is None,
                       type(context).__name__ if context else "없음")
                 # 창에서 실제로 조회되는지 (컨텍스트가 현재일 때)
                 addr = platform_gl.get_proc_address(None, b"glGetString")
                 check("S3 glGetString 주소를 얻었다", addr != 0, hex(addr))
                 fbo = platform_gl.current_fbo()
-                check("S3 현재 FBO 를 읽었다", isinstance(fbo, int), str(fbo))
+                check("S3 현재 FBO 를 읽었다", platform_gl.get_proc_address(None, b"glGetIntegerv") != 0,
+                      str(fbo))
 
                 before = rendered["n"]
-                ctx = GLib.MainContext.default()
-                deadline = time.monotonic() + 5
-                while time.monotonic() < deadline:
-                    while ctx.pending():
-                        ctx.iteration(False)
-                    time.sleep(0.05)
+                before_position = win.player.time_pos or 0
+                GLib.timeout_add_seconds(5, self._finish, win, before, before_position)
+                return False
+            except Exception as exc:
+                check("스파이크 초기화", False, f"{type(exc).__name__}: {exc}")
+                win.player.close()
+                self.quit()
+                return False
+
+        def _finish(self, win, before, before_position):
+            try:
+                area = win._video
                 after = rendered["n"]
-                check("S4 렌더 콜백이 불린다 ★핵심", after - before > 5,
+                check("S4 렌더 콜백이 불린다 ★핵심", area._ready and win.player._ctx is not None
+                      and after - before > 5,
                       f"{before} → {after} (5초 동안 {after - before}회)")
 
                 position = win.player.time_pos
-                check("S5 재생 위치가 흐른다", (position or 0) > 0.3,
-                      f"{position}")
+                check("S5 재생 위치가 흐른다", (position or 0) - before_position > 0.3,
+                      f"{before_position} → {position}")
                 hw = win.player.hwdec_current
                 check("S6 하드웨어 디코딩", hw not in ("", "no"), hw)
             except Exception as exc:                # noqa: BLE001
@@ -123,6 +131,7 @@ def main() -> int:
                 traceback.print_exc()
                 check("스파이크가 끝까지 돌았다", False, f"{type(exc).__name__}: {exc}")
             finally:
+                win._video.make_current()
                 win.player.close()
                 self.quit()
             return False

@@ -2,6 +2,8 @@
 import json
 import os
 import time
+import sys
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -80,6 +82,10 @@ for line in sys.stdin:
     trace=tmp_path/'trace.jsonl'
     monkeypatch.setenv('BORA_TEST_TRACE',str(trace))
     monkeypatch.setattr(client,'codex_command',lambda:str(script))
+    native_popen = subprocess.Popen
+    def python_server(argv, **kwargs):
+        return native_popen([sys.executable, str(script), *argv[1:]], **kwargs)
+    monkeypatch.setattr(client.subprocess, 'Popen', python_server)
     return trace
 
 
@@ -133,7 +139,8 @@ def test_conversation_save_restore_and_conflict(tmp_path):
     one.messages=[{'role':'user','content':'질문'}];one.save()
     two=Conversation(video,directory)
     assert two.messages==one.messages
-    assert one.path.stat().st_mode & 0o077 == 0
+    if os.name == 'posix':
+        assert one.path.stat().st_mode & 0o077 == 0
     two.messages.append({'role':'assistant','content':'답변'});two.save()
     with pytest.raises(OSError):one.save()
     assert Conversation(tmp_path/'other.mp4',directory).messages==[]
@@ -157,7 +164,8 @@ def test_workspace_exact_paths_no_shell(tmp_path,monkeypatch):
     argv,cwd,env=calls[0]
     assert cwd==folder and argv[argv.index('--cd')+1]==str(folder)
     assert 'workspace-write' in argv and 'on-request' in argv
-    assert str(note) in argv[-1] and '설명해줘' in argv[-1]
+    assert json.loads(argv[-1].split('\n')[1])['메모'] == str(note)
+    assert '설명해줘' in argv[-1]
     assert 'forced_login_method="chatgpt"' in argv
 
 
@@ -191,7 +199,8 @@ def test_claude_workspace_uses_interactive_cli_and_preserves_arguments(tmp_path,
     assert '--print' not in argv and '-p' not in argv
     assert argv[argv.index('--permission-mode')+1] == 'manual'
     assert json.loads(argv[argv.index('--settings')+1])['forceLoginMethod'] == 'claudeai'
-    assert '왜?; echo nope' in argv[-1] and str(note) in argv[-1]
+    assert '왜?; echo nope' in argv[-1]
+    assert json.loads(argv[-1].split('\n')[1])['메모'] == str(note)
     assert not any(k in env for k in ('ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_OAUTH_TOKEN'))
     assert note.read_text() == '기존 메모'
 
