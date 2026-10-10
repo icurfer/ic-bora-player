@@ -18,6 +18,7 @@ from .images import ImageError, find_images
 from .api import AIError, APIAskRunner, load_config, check_api, get_key
 from .history import Conversation
 from ..notes.model import format_stamp
+from ..ui import PANEL_WIDTH
 
 
 class ChatPanel(Gtk.Box):
@@ -25,7 +26,7 @@ class ChatPanel(Gtk.Box):
 
     def __init__(self, owner):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=4,
-                         width_request=320, margin_start=10, margin_end=10,
+                         width_request=PANEL_WIDTH, margin_start=10, margin_end=10,
                          margin_top=4, margin_bottom=4)
         self.window = owner
         self.doc = None

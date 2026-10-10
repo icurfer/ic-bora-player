@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 공통 UI Linux 1차 적용: 메모 색상 자동 테마 대응, 공통 크기·영상 안내 스타일 관리, 삭제 구간 한국어 Pango 표시. Windows 실측은 후속.
+
 - OS 공통 UI·UX 관리 검토 문서 추가: 공통 GTK 화면 유지, 스타일·액션·OS별 실측 기준 권고. UI 구현 변경은 없음.
 
 - Windows 실행 보완: WGL/EGL 조회, uchardet DLL 탐색, Python/GIO 명령줄, MSYS2 venv 경로, PowerShell 외부 터미널과 개발 실행 스크립트. 현재 Windows PC에서 실제 재생·하드웨어 디코딩·자막·메모·클립 검증. 전체 Windows 지원·IME·배포는 미완료.

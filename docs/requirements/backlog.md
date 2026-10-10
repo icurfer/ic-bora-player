@@ -36,3 +36,4 @@
 | 30 | 메모에서 로컬 Codex/Claude Code 터미널 선택 | 2026-10-09 사용자 요청 | ✅ Unreleased · 단위/GTK 276개·격리 실제 키입력 10항목·독립 UI 검토·GitHub deb 업로드 성공. 실제 Claude 계정 응답은 미검증 |
 | 31 | ic-praxis 개발 하네스 적용 | 2026-10-10 사용자 요청 | ✅ Unreleased · 개발 프로필·공통 task 진입점·검증 만료·CI 연동. 하네스 9개/앱 276개 및 원격 키입력·패키지 업로드 통과 |
 | 32 | OS 공통 UI·UX 관리와 Windows 호환 방식 검토 | 2026-10-10 사용자 요청 | ✅ 검토 완료 · 공통 GTK UI 유지와 스타일·액션·검증 통합 권고. [검토 기록](../research/2026-10-10-shared-ui-ux.md). 개선 구현과 양쪽 OS 화면 비교는 미완료 |
+| 33 | 공통 UI 기획·적용 — Linux 먼저, Windows 후속 | 2026-10-10 사용자 요청 | ✅ Unreleased · Linux 1차 공통 스타일·테마·한국어 안내 및 UI 49개 확인. [완료 기록](../done/shared-ui-linux-20261010.md). Windows·실제 고대비·배율·전체 액션 통합은 후속 |

@@ -20,6 +20,7 @@ from gi.repository import Adw, Gdk, GLib, Gtk, Pango  # noqa: E402
 
 from ..ai import AskRunner, Question, ensure_ready as ai_ready  # noqa: E402
 from ..log import get as get_logger  # noqa: E402
+from ..ui import PANEL_WIDTH, update_note_colors  # noqa: E402
 from .model import NoteDocument, format_stamp, parse_stamps  # noqa: E402
 
 log = get_logger("notes.panel")
@@ -33,7 +34,9 @@ class NotePanel(Gtk.Box):
 
     def __init__(self, window) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0,
-                         width_request=320)
+                         width_request=PANEL_WIDTH)
+        self._theme_signals = []
+        self._theme_manager = None
         self.window = window
         self.doc: NoteDocument | None = None
         self._save_id = 0
@@ -68,6 +71,25 @@ class NotePanel(Gtk.Box):
         scroll = Gtk.ScrolledWindow(child=self._view, vexpand=True, hexpand=True)
         self.append(scroll)
         self.append(self._build_status())
+
+    def do_root(self) -> None:
+        Gtk.Box.do_root(self)
+        self._theme_manager = Adw.StyleManager.get_for_display(self.get_display())
+        self._theme_signals = [
+            self._theme_manager.connect(signal, self._update_colors)
+            for signal in ("notify::dark", "notify::high-contrast")]
+        self._update_colors()
+
+    def do_unroot(self) -> None:
+        for signal in self._theme_signals:
+            self._theme_manager.disconnect(signal)
+        self._theme_signals = []
+        self._theme_manager = None
+        Gtk.Box.do_unroot(self)
+
+    def _update_colors(self, *_args) -> None:
+        if self._theme_manager is not None:
+            update_note_colors(self._view, self._buffer, self._theme_manager)
 
     # ── 구성 ─────────────────────────────────────────────────────────────
     def _build_toolbar(self) -> Gtk.Widget:
@@ -511,7 +533,7 @@ class NotePanel(Gtk.Box):
 
     def _make_tags(self) -> None:
         b = self._buffer
-        b.create_tag(self.STAMP_TAG, foreground="#7a5af8",
+        b.create_tag(self.STAMP_TAG,
                      underline=Pango.Underline.SINGLE)
         b.create_tag("hidden", invisible=True)          # 마크업 문자를 감춘다
         for level, scale in self.HEADING_SCALES.items():
@@ -519,11 +541,11 @@ class NotePanel(Gtk.Box):
                          pixels_above_lines=10, pixels_below_lines=4)
         b.create_tag("bold", weight=Pango.Weight.BOLD)
         b.create_tag("italic", style=Pango.Style.ITALIC)
-        b.create_tag("code", family="monospace", background="#00000014")
+        b.create_tag("code", family="monospace")
         b.create_tag("strike", strikethrough=True)
-        b.create_tag("quote", style=Pango.Style.ITALIC, foreground="#6b7280",
+        b.create_tag("quote", style=Pango.Style.ITALIC,
                      left_margin=28)
-        b.create_tag("bullet", foreground="#7a5af8", weight=Pango.Weight.BOLD)
+        b.create_tag("bullet", weight=Pango.Weight.BOLD)
 
     def _cursor_line(self) -> int:
         it = self._buffer.get_iter_at_mark(self._buffer.get_insert())

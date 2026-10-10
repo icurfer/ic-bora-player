@@ -48,7 +48,8 @@ def pump(seconds=.1):
 
 
 def wait_for(condition):
-    end = time.monotonic() + 4
+    # 소프트웨어 렌더링 중 worker/GLib 응답도 기다린다. 무한 대기는 하지 않는다.
+    end = time.monotonic() + 10
     while not condition() and time.monotonic() < end:
         pump(.04)
     return condition()
@@ -140,6 +141,9 @@ class Probe(BoraApplication):
         w = self.win
         try:
             w.show_chat(); w.present(); pump(.3)
+            # 가상 X11 소프트웨어 재생이 idle 응답 처리를 굶기지 않게 한다.
+            # 이 시나리오는 입력·첨부 검증이다. 실제 재생 회귀는 시나리오01에서 검사한다.
+            w.player.paused = True
             notes, chat = w._notes, w._chat
             notes._buffer.set_text('메모 질문'); notes.focus_editor(); pump()
             with patch.object(w,'open_agent_terminal',return_value=True) as terminal:
@@ -163,7 +167,11 @@ class Probe(BoraApplication):
                 check('실제 메모 CtrlShiftS 캡처 호출', capture.call_count == 1)
             notes._buffer.set_text('메모 저장 검사'); notes.focus_editor(); pump()
             keypress(w,['Control_L','s'])
-            check('실제 메모 CtrlS 저장', notes.doc.path.read_text() == notes._text())
+            # NoteDocument.save는 끝 개행을 보장한다. 편집 버퍼와 파일의 계약을 비교한다.
+            expected = notes._text()
+            if expected and not expected.endswith('\n'):
+                expected += '\n'
+            check('실제 메모 CtrlS 저장', notes.doc.path.read_text() == expected)
             keypress(w,['Control_L','t'])
             check('실제 메모 CtrlT 현재 시각', '[' in notes._text())
             notes._buffer.set_text('이미지 질문\n![00:00:01](a.assets/sample.png)')
@@ -203,13 +211,24 @@ class Probe(BoraApplication):
                 check('Codex 이미지 요청 완료', wait_for(lambda: chat._runner is None and bool(local_images)))
                 check('Codex에 실제 이미지 임시파일 전달', local_images[-1] == (folder/'videos/a.assets/sample.png').read_bytes())
             w.set_default_size(960,560); pump(.3)
-            check('960x560 두 입력과 AI 전송 접근', w.get_height()==560 and notes._view.get_mapped() and chat._input.get_mapped() and chat.send_button.get_mapped())
+            def inside(widget):
+                found, bounds = widget.compute_bounds(w)
+                return (widget.get_mapped() and found and bounds.get_width() > 0
+                        and bounds.get_height() > 0 and bounds.get_x() >= 0
+                        and bounds.get_y() >= 0
+                        and bounds.get_x() + bounds.get_width() <= w.get_width() + 1
+                        and bounds.get_y() + bounds.get_height() <= w.get_height() + 1)
+            # 요청 크기에는 창 장식이 포함될 수 있다. 실제 콘텐츠 안의 접근성을 검사한다.
+            check('960x560 두 입력과 AI 전송 접근', w.get_width() <= 960 and w.get_height() <= 560
+                  and all(inside(widget) for widget in (notes._view, chat._input, chat.send_button)))
             shot(w,'01-images-shortcuts')
             notes._shortcut_button.popup(); pump(.2)
             check('메모 단축키 도움 열림', notes._shortcut_button.get_popover().get_visible())
             shot(w,'03-shortcut-help')
             notes._shortcut_button.popdown()
-            check('정상 종료', w._on_close() is False)
+            notes.focus_editor(); pump()
+            keypress(w, ['Control_L', 'w'])
+            check('실제 CtrlW 정상 종료', wait_for(lambda: not w.get_visible() and not w.player.alive))
         except Exception:
             import traceback
             traceback.print_exc(); results.append(False)

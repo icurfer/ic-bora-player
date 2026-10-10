@@ -13,7 +13,10 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, GLib, Gtk, Pango  # noqa: E402
+gi.require_version("PangoCairo", "1.0")
+from gi.repository import Adw, Gdk, GLib, Gtk, Pango, PangoCairo  # noqa: E402
+
+from .ui import WINDOW_WIDTH, WINDOW_HEIGHT, STUDY_WIDTH, NOTE_INITIAL_HEIGHT, MEDIA_HINT_CSS
 
 from .glarea import MpvGLArea  # noqa: E402
 from . import log as logmod  # noqa: E402
@@ -48,7 +51,8 @@ class BoraWindow(Adw.ApplicationWindow):
     UI_TRANSITION_MS = 250     # 접히고 펴지는 시간
 
     def __init__(self, app: Adw.Application) -> None:
-        super().__init__(application=app, default_width=960, default_height=700, title="Bora")
+        super().__init__(application=app, default_width=WINDOW_WIDTH,
+                         default_height=WINDOW_HEIGHT, title="Bora")
 
         self.player = Player()
         self._seeking = False          # 사용자가 슬라이더를 잡고 있는 동안은 갱신하지 않는다
@@ -107,8 +111,7 @@ class BoraWindow(Adw.ApplicationWindow):
             halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER,
             margin_start=24, margin_end=24)
         hint_style = Gtk.CssProvider()
-        hint_style.load_from_data(
-            b"label { color: white; background: rgba(0,0,0,0.85); padding: 20px; border-radius: 12px; }")
+        hint_style.load_from_data(MEDIA_HINT_CSS)
         self._media_hint.get_style_context().add_provider(
             hint_style, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         self._video_stack.add_overlay(self._media_hint)
@@ -121,12 +124,12 @@ class BoraWindow(Adw.ApplicationWindow):
         self._notes = NotePanel(self)
         from .ai.panel import ChatPanel
         self._chat = ChatPanel(self)
-        self._study = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL, width_request=340,
+        self._study = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL, width_request=STUDY_WIDTH,
                                 vexpand=True, resize_start_child=True, resize_end_child=True,
                                 shrink_start_child=False, shrink_end_child=False, wide_handle=True)
         self._study.set_start_child(self._notes)
         self._study.set_end_child(self._chat)
-        self._study.set_position(230)
+        self._study.set_position(NOTE_INITIAL_HEIGHT)
         self._paned.set_end_child(self._study)
         self._study.set_visible(False)
         root.append(self._paned)
@@ -1177,12 +1180,10 @@ class BoraWindow(Adw.ApplicationWindow):
         cr.rectangle(0, 0, width, height)
         cr.fill()
         cr.set_source_rgba(1, 1, 1, 0.55)
-        cr.select_font_face("sans")
-        cr.set_font_size(15)
-        label = "삭제된 구간"
-        extents = cr.text_extents(label)
-        cr.move_to((width - extents.width) / 2, (height + extents.height) / 2)
-        cr.show_text(label)
+        layout = _area.create_pango_layout("삭제된 구간")
+        text_width, text_height = layout.get_pixel_size()
+        cr.move_to((width - text_width) / 2, (height - text_height) / 2)
+        PangoCairo.show_layout(cr, layout)
 
     def _on_timeline_position(self, seconds: float) -> None:
         """재생헤드가 지운 구간에 있으면 화면을 검게 덮는다.
