@@ -38,5 +38,10 @@ commands as a substitute. Only `development` uses the procedure below.
 
 Do not create extra CI workflows or deploy just to run this procedure.
 Bora already uses GitHub CI by user request; retain its package build and upload.
+Read `docs/TASK_MANAGEMENT.md` before task intake. Use the installed task-register
+skill to read space 26 and the target task/comments, reuse existing work, and
+record the portal task ID alongside this local harness ID in the task documents.
+Portal status and handoff updates follow that policy; harness validation does not
+update the portal automatically. Missing portal access must be reported explicitly.
 Commit/push follow AGENTS.md and docs/RELEASING.md. The harness is a local
 workflow aid, not a security boundary or a replacement for code review.

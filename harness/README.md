@@ -6,6 +6,10 @@
 Bora 버전 정책은 docs/RELEASING.md가 우선한다.
 검사 전 변경 파일을 검토해 명시적으로 stage한다. 작업 기록은 커밋하지 않는다.
 
+포탈 작업·인계는 [task 관리 정책](../docs/TASK_MANAGEMENT.md)을 따른다.
+ic-bora 스페이스 26의 task ID를 기획/완료 문서에 적고, 포탈 댓글에는 로컬 하네스 ID와
+OS·커밋·검증 결과를 남긴다. 포탈 상태와 이 하네스의 검사 상태는 자동 동기화되지 않는다.
+
 # Praxis task harness / 작업 하네스
 
 This folder is installed by default. CI stays off. Requires Node.js 18+ and Git;
