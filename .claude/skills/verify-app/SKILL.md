@@ -56,6 +56,7 @@ done
 | 16 shortcuts-images | 실제 XTest 키입력·메모/AI 단축키·두 제공자 이미지 바이트 전달 | — |
 | 17 terminal-choice | 격리 Xvfb에서 실제 Ctrl+Enter로 Codex/Claude 선택·메모 저장 전달 | BORA_TEST_ISOLATED_X11=1 |
 | 18 shared-ui | 공통 화면의 테마·메모 보존·배치·아이콘·신호 정리, 모의 고대비 정책 | BORA_REVIEW_SHOTS=캡처폴더 선택 |
+| 19 study-agent | 메모/에이전트 독립 표시, Q&A·원문·모의 요약, 실제 프레임 첨부·속도 키 | BORA_TEST_ISOLATED_X11=1, 캡처폴더 선택 |
 
 > ⚠ **시나리오는 반드시 설정을 격리한다** — `win.state = State(Path(tempfile.mkdtemp(...)))`.
 > 예전에 이걸 빠뜨려 검증용 임시 영상 12개가 **사용자의 최근 파일 목록에 쌓였다.**

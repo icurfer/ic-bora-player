@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from urllib.parse import quote
 
 import gi
 
@@ -342,6 +343,10 @@ class NotePanel(Gtk.Box):
             return False
         self._cancel_autosave()
         self.doc.text = self._text()
+        if (not force and not self.doc.dirty and not self.doc.path.exists()
+                and not getattr(self.window, "_notes_open", True)):
+            # 에이전트만 열 때 맥락 조회용 모델을 로드해도 빈 메모 파일은 만들지 않는다.
+            return False
         if not force and not self.doc.dirty and self.doc.path.is_file():
             return False
         if self.doc.changed_outside():
@@ -376,8 +381,9 @@ class NotePanel(Gtk.Box):
         self._view.grab_focus()
         self._retag()
 
-    def append_pin(self, start: float, end: float | None = None, label: str = "") -> bool:
-        """핀을 메모 끝에 한 줄로 남긴다.
+    def append_pin(self, start: float, end: float | None = None, label: str = "",
+                   *, image: Path | None = None, captured_at: float = 0.0) -> bool:
+        """핀의 시각과 장면을 메모에 남기고 제목 위치에 커서를 둔다.
 
         패널이 닫혀 있어도 남겨야 한다 — 나중에 열었을 때 핀과 메모가 따로 놀면
         되돌아볼 때 둘을 맞춰 봐야 한다. 문서가 아직 없으면 지금 연다.
@@ -392,12 +398,19 @@ class NotePanel(Gtk.Box):
         end_iter = self._buffer.get_end_iter()
         prefix = "" if end_iter.starts_line() else "\n"
         self._buffer.insert(end_iter, prefix + line)
+        title_end = self._buffer.get_end_iter().get_offset()
+        if image is not None:
+            relative = image.resolve().relative_to(self.doc.path.parent.resolve()).as_posix()
+            self._buffer.insert(self._buffer.get_end_iter(),
+                                f'\n\n![장면 {format_stamp(captured_at)}]({quote(relative, safe="/")})\n')
         # 커서를 그 줄 끝에 둔다 — 패널이 열려 있으면 바로 제목을 칠 수 있다.
-        self._buffer.place_cursor(self._buffer.get_end_iter())
+        self._buffer.place_cursor(self._buffer.get_iter_at_offset(title_end))
+        self._view.scroll_to_mark(self._buffer.get_insert(), 0.15, True, 0.0, 0.5)
         self._retag()
         # 패널이 닫혀 있으면 자동 저장 타이머가 돌 일이 없다. 바로 저장한다.
         if not self.window._notes_open:
-            self.save()
+            if not self.save():
+                return False
         else:
             self._schedule_autosave()
         log.debug("핀을 메모에 남겼다: %s", line.strip())
@@ -679,3 +692,4 @@ class NotePanel(Gtk.Box):
 
     def focus_editor(self) -> None:
         self._view.grab_focus()
+        self._view.scroll_to_mark(self._buffer.get_insert(), 0.15, True, 0.0, 0.5)

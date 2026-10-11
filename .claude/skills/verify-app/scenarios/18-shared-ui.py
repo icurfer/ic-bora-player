@@ -129,6 +129,7 @@ def main():
             pump(.5)
             window.player.paused = True
             window.toggle_notes(True)
+            window.show_chat()
             notes, chat = window._notes, window._chat
             notes._buffer.set_text('# 공통 화면 검토\n한국어 메모와 영상 학습\n[00:00:01] 참고 구간\n'
                                    '> 인용문 가독성 확인\n`코드 조각`과 **강조**\n- 목록 표시')

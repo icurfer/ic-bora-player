@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from uuid import uuid4
 
 import gi
 
@@ -69,6 +70,7 @@ class BoraWindow(Adw.ApplicationWindow):
         self._clips = ClipList()
         self._clip_window: ClipWindow | None = None
         self._notes_open = False
+        self._chat_open = False
         self._stt: ExtractRunner | None = None
         self._stt_bar: Gtk.ProgressBar | None = None
         self._last_toast_title: str | None = None
@@ -371,6 +373,8 @@ class BoraWindow(Adw.ApplicationWindow):
         play_label = "재생" if self.player.paused else "일시정지"
         items = [
             (play_label, "Space", self.toggle_pause),
+            ("재생 속도 느리게", ",", lambda: self._nudge_speed(-0.25)),
+            ("재생 속도 빠르게", ".", lambda: self._nudge_speed(0.25)),
             ("정지 (처음으로)", "S", self.stop),
             (None, None, None),
             ("5초 뒤로", "←", lambda: self.player.seek_relative(-5)),
@@ -381,8 +385,8 @@ class BoraWindow(Adw.ApplicationWindow):
             (None, None, None),
             ("전체화면 나가기" if self.is_fullscreen() else "전체화면", "F", self.toggle_fullscreen),
             ("구간 반복", "A", self.cycle_loop),
-            ("핀 꽂기 (제목 입력)", "P", lambda: self.add_pin()),
-            ("핀만 꽂기", "Shift+P", lambda: self.add_pin(write_title=False)),
+            ("장면 핀 · 메모 입력", "P", lambda: self.add_pin()),
+            ("장면 핀 · 입력 없이 저장", "Shift+P", lambda: self.add_pin(write_title=False)),
             ("핀 목록", "", self._show_pin_menu),
             (None, None, None),
             ("편집 타임라인", "Ctrl+E", self.toggle_edit),
@@ -477,7 +481,7 @@ class BoraWindow(Adw.ApplicationWindow):
         self._controls_revealer.set_reveal_child(visible)
         # 전체화면에서 영상을 가리지 않게 메모도 함께 접는다(내용은 그대로 있다).
         if self.is_fullscreen():
-            self._study.set_visible(visible and self._notes_open)
+            self._study.set_visible(visible and (self._notes_open or self._chat_open))
         # 감출 때는 마우스 커서도 같이 감춘다(영상 위에 남으면 거슬린다).
         self.set_cursor(None if visible else Gdk.Cursor.new_from_name("none", None))
 
@@ -525,6 +529,13 @@ class BoraWindow(Adw.ApplicationWindow):
         open_btn.connect("clicked", lambda *_: self.choose_file())
         header.pack_start(open_btn)
 
+        self._notes_toggle = Gtk.ToggleButton(label="메모", tooltip_text="학습 메모 열기/닫기 (Ctrl+M)")
+        self._notes_toggle.connect("clicked", lambda *_: self.toggle_notes())
+        header.pack_start(self._notes_toggle)
+        self._agent_toggle = Gtk.ToggleButton(label="에이전트", tooltip_text="현재 영상의 학습 에이전트 열기/닫기")
+        self._agent_toggle.connect("clicked", lambda *_: self.toggle_agent())
+        header.pack_start(self._agent_toggle)
+
         self._settings_button = Gtk.MenuButton(icon_name="emblem-system-symbolic",
                                                tooltip_text="환경설정")
         self._settings_button.update_property([Gtk.AccessibleProperty.LABEL], ["환경설정"])
@@ -546,7 +557,8 @@ class BoraWindow(Adw.ApplicationWindow):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
                       margin_top=10, margin_bottom=10, margin_start=10, margin_end=10)
 
-        box.append(Gtk.Label(label="재생 속도", xalign=0, css_classes=["dim-label"]))
+        box.append(Gtk.Label(label="재생 속도 · , 느리게 / . 빠르게 (0.25배씩)",
+                             xalign=0, wrap=True, css_classes=["dim-label"]))
         speeds = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4, homogeneous=True)
         current = round(self.player.speed, 2)
         for value in self.SPEEDS:
@@ -732,26 +744,43 @@ class BoraWindow(Adw.ApplicationWindow):
         self.open_path(Path(path))
 
     # ── 학습 메모 ────────────────────────────────────────────────────────
+    def _sync_study(self):
+        self._notes.set_visible(self._notes_open)
+        self._chat.set_visible(self._chat_open)
+        self._study.set_visible(self._notes_open or self._chat_open)
+        self._notes_toggle.set_active(self._notes_open)
+        self._agent_toggle.set_active(self._chat_open)
+        if self._study.get_visible() and self._paned.get_position() <= 0:
+            self._paned.set_position(max(360, self.get_width() - 380))
+
+    def _ensure_notes(self):
+        if self._current is None:
+            self.toast("영상을 먼저 열어 주세요")
+            return False
+        if self._notes.doc is None or self._notes.doc.path != NoteDocument.path_for(self._current):
+            return self._notes.load_for(self._current, self._current.stem)
+        return True
+
     def toggle_notes(self, show: bool | None = None) -> None:
         want = (not self._notes_open) if show is None else bool(show)
-        if want and self._current is None:
-            self.toast("영상을 먼저 열어라")
-            want = False
+        if want and not self._ensure_notes():
+            self._sync_study()
+            return
+        if not want and self._notes_open and not self._notes.prepare_leave():
+            self._sync_study()
+            return
         self._notes_open = want
-        self._study.set_visible(want)
+        self._sync_study()
         if want:
-            if self._notes.doc is None or self._notes.doc.path != NoteDocument.path_for(self._current):
-                if not self._notes.load_for(self._current, self._current.stem):
-                    return
-            self._study.set_visible(True)
-            # 처음 열 때 절반쯤 차지하게 둔다
-            if self._paned.get_position() <= 0:
-                self._paned.set_position(max(360, self.get_width() - 380))
             self._chat.refresh_context()
             self._notes.focus_editor()
+
+    def toggle_agent(self):
+        if self._chat_open:
+            self._chat_open = False
+            self._sync_study()
         else:
-            self._notes.save()
-        log.debug("메모 패널: %s", want)
+            self.show_chat()
 
     def open_codex_terminal(self, question=None):
         """기존 호출자를 위한 Codex 명시 실행."""
@@ -789,9 +818,10 @@ class BoraWindow(Adw.ApplicationWindow):
         return True
 
     def show_chat(self, question=None):
-        self.toggle_notes(True)
-        if self._current is None:
+        if not self._ensure_notes():
             return
+        self._chat_open = True
+        self._sync_study()
         if not self._chat.load_for(self._current):
             self.toast("대화 기록을 열지 못했습니다. 아래쪽 Codex 대화에서 확인하세요.")
         if question is not None:
@@ -1336,9 +1366,18 @@ class BoraWindow(Adw.ApplicationWindow):
             pin = Pin(start=now, label=label)
             note = f"핀 {_fmt_time(now)}"
         self.state.add_pin(self._current, pin)
+        captured_at = self.player.time_pos or 0.0
+        image = None
+        try:
+            assets = NoteDocument.assets_dir_for(self._current)
+            assets.resolve().relative_to(self._current.parent.resolve())
+            image = self.player.screenshot(assets / f'pin-{uuid4().hex}.png', include_subs=True)
+        except Exception as exc:
+            log.warning("핀 화면 저장 실패: %s", exc)
+            note += " · 화면 저장 실패(시각은 보존)"
         # 메모에도 남긴다 — 핀과 메모가 따로 놀면 되돌아볼 때 둘을 맞춰 봐야 한다.
         try:
-            if self._notes.append_pin(pin.start, pin.end, label):
+            if self._notes.append_pin(pin.start, pin.end, label, image=image, captured_at=captured_at):
                 note += " · 메모에 남김"
                 if write_title and not label:
                     # 패널을 열고 커서를 그 줄 끝에 둔다. 이어서 치면 그대로 제목이 된다.
@@ -1346,8 +1385,11 @@ class BoraWindow(Adw.ApplicationWindow):
                         self.toggle_notes(True)
                     self._notes.focus_editor()
                     note += " — 이어서 제목을 입력하세요"
+            else:
+                note += " · 메모 기록 실패"
         except Exception as exc:            # 메모 실패가 핀을 막으면 안 된다
             log.warning("핀을 메모에 남기지 못했다: %s", exc)
+            note += " · 메모 기록 실패"
         self.toast(note)
         log.debug("%s", note)
         return pin
@@ -1450,7 +1492,7 @@ class BoraWindow(Adw.ApplicationWindow):
                                   "열려 있다" if self._notes_open else "영상 옆 .md 에 기록"))
         box.append(self._menu_row("외부 터미널로 파일 작업", "", self.open_agent_terminal,
                                   "메모 상단에서 선택한 Codex / Claude Code"))
-        box.append(self._menu_row("AI 대화", "", self.show_chat,
+        box.append(self._menu_row("학습 에이전트", "", self.show_chat,
                                   "현재 영상에 대해 물어보기"))
         box.append(self._menu_row("AI 연결 · 로그인/API 키", "", self.show_ai_settings,
                                   "ChatGPT 로그인 · 연결 확인"))
@@ -1695,8 +1737,8 @@ class BoraWindow(Adw.ApplicationWindow):
         box.append(self._loop_btn)
 
         self._pin_btn = Gtk.Button(icon_name="starred-symbolic",
-                                   tooltip_text="핀 꽂기 (P) — 메모에 남기고 제목을 이어서 입력한다. "
-                                                "Shift+P 는 조용히 꽂기만")
+                                   tooltip_text="장면 핀 (P) — 영상 시각·화면을 남기고 생각을 바로 입력합니다. "
+                                                "Shift+P 는 입력 없이 저장")
         self._pin_btn.connect("clicked", lambda *_: self.add_pin())
         box.append(self._pin_btn)
 

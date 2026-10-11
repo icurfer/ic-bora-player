@@ -44,6 +44,8 @@ jobs:
           PYTEST
       - name: Verify terminal keyboard flow on isolated display
         run: xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo BORA_TEST_ISOLATED_X11=1 /usr/bin/python3 .claude/skills/verify-app/scenarios/17-terminal-choice.py
+      - name: Verify study agent on isolated display
+        run: xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo BORA_TEST_ISOLATED_X11=1 /usr/bin/python3 .claude/skills/verify-app/scenarios/19-study-agent.py
       - name: Build and check development package
         run: |
           expected="$(python3 scripts/version_policy.py --development --debian)"

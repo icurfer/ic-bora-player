@@ -141,6 +141,7 @@ class Probe(BoraApplication):
         w = self.win
         try:
             w.show_chat(); w.present(); pump(.3)
+            w.toggle_notes(True); pump()
             # 가상 X11 소프트웨어 재생이 idle 응답 처리를 굶기지 않게 한다.
             # 이 시나리오는 입력·첨부 검증이다. 실제 재생 회귀는 시나리오01에서 검사한다.
             w.player.paused = True
@@ -210,6 +211,17 @@ class Probe(BoraApplication):
                 chat.set_question('Codex 이미지 확인'); chat.send()
                 check('Codex 이미지 요청 완료', wait_for(lambda: chat._runner is None and bool(local_images)))
                 check('Codex에 실제 이미지 임시파일 전달', local_images[-1] == (folder/'videos/a.assets/sample.png').read_bytes())
+                chat.image_check.set_active(False)
+                before_note = notes._text()
+                check('메모 작성 없이 영상 캡처 첨부', chat.capture_frame() and notes._text() == before_note)
+                captured = chat._captures[str(chat._path)][0].read_bytes()
+                sent = len(local_images)
+                chat.set_question('현재 화면을 설명해 주세요'); chat.send()
+                check('직접 캡처 실제 바이트 전송', wait_for(lambda: chat._runner is None and len(local_images) > sent)
+                      and local_images[-1] == captured)
+                check('전송 완료 후 캡처 첨부 해제', not chat._captures.get(str(chat._path)))
+            # 오류 안내로 펼쳐진 옵션을 접어 기본 최소 크기 계약을 검사한다.
+            chat._context_options.set_expanded(False)
             w.set_default_size(960,560); pump(.3)
             def inside(widget):
                 found, bounds = widget.compute_bounds(w)

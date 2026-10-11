@@ -110,12 +110,12 @@ def main() -> int:
                 check("P6 메모가 열린다", win._notes_open)
                 buffer = win._notes._buffer
                 cursor = buffer.get_iter_at_mark(buffer.get_insert())
-                check("P6 커서가 문서 끝에 온다",
-                      cursor.get_offset() == buffer.get_end_iter().get_offset(),
+                check("P6 커서가 핀 제목 끝에 온다",
+                      cursor.ends_line(),
                       f"{cursor.get_offset()} / {buffer.get_end_iter().get_offset()}")
 
                 # P7 — 이어서 치면 제목이 된다
-                buffer.insert(buffer.get_end_iter(), "합의 알고리즘이 어렵다")
+                buffer.insert(buffer.get_iter_at_mark(buffer.get_insert()), "합의 알고리즘이 어렵다")
                 win._notes.save()
                 body = win._notes.doc.path.read_text(encoding="utf-8")
                 check("P7 친 글자가 그 줄의 제목이 된다",

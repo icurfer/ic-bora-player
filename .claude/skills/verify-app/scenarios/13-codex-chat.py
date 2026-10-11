@@ -104,6 +104,8 @@ class Probe(BoraApplication):
 
     def run_checks(self):
         w = self.win
+        # Xvfb 입력/worker 검사는 소프트웨어 영상 렌더링과 분리한다.
+        w.player.paused = True
         try:
             a, b = folder / "a.mp4", folder / "b.mp4"
             w.toggle_notes(True)
@@ -211,7 +213,8 @@ class Probe(BoraApplication):
             w.set_default_size(960, 560)
             pump(.4)
             check("기존 960x560에서 두 입력 표시", notes._view.get_mapped() and chat._input.get_mapped()
-                  and w.get_height() == 560)
+                  and notes._view.get_height() >= 24 and chat._input.get_height() >= 24
+                  and chat.send_button.get_mapped())
             shot("05-compact", w)
             w.set_default_size(720, 560)
             pump(.4)

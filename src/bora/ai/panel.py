@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import uuid
 from pathlib import Path
 
 import gi
@@ -10,15 +11,18 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gdk, GLib, Gtk, Pango
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import Gdk, GdkPixbuf, GLib, Gtk, Pango
 
 from .client import AskRunner, check_connection, ensure_ready
 from .context import Question
-from .images import ImageError, find_images
+from .images import ImageError, find_images, load_images, MAX_IMAGES
 from .api import AIError, APIAskRunner, load_config, check_api, get_key
 from .history import Conversation
 from ..notes.model import format_stamp
 from ..ui import PANEL_WIDTH
+from ..notes.model import NoteDocument
+from .study import qa_text, StudyPreview
 
 
 class ChatPanel(Gtk.Box):
@@ -42,9 +46,11 @@ class ChatPanel(Gtk.Box):
         self._dirty = False
         self._save_failed = False
         self._checking = False
+        self._captures = {}
+        self._study_preview = None
 
         header = Gtk.Box(spacing=6)
-        title = Gtk.Label(label="AI 대화", xalign=0, hexpand=True)
+        title = Gtk.Label(label="학습 에이전트", xalign=0, hexpand=True)
         title.add_css_class("heading")
         header.append(title)
         self._help = Gtk.Button(label="연결 설정", tooltip_text="AI 연결 방식·로그인·API 키 설정")
@@ -58,6 +64,16 @@ class ChatPanel(Gtk.Box):
         self.new_button.connect("clicked", self._confirm_new)
         header.append(self.new_button)
         self.append(header)
+        tools = Gtk.Box(spacing=6)
+        self.capture_button = Gtk.Button(label="화면 첨부", tooltip_text="현재 영상 프레임 캡처 · 자막 포함")
+        self.capture_button.connect("clicked", lambda *_: self.capture_frame())
+        tools.append(self.capture_button)
+        self.study_button = Gtk.Button(label="학습메모 만들기", tooltip_text="대화 원문 또는 AI 요약을 검토해 메모에 추가")
+        self.study_button.connect("clicked", lambda *_: self.make_study())
+        tools.append(self.study_button)
+        self.append(tools)
+        self._capture_box = Gtk.Box(spacing=4)
+        self.append(self._capture_box)
         self._status = Gtk.Label(label="로컬 Codex · ChatGPT 사용 한도 적용", xalign=0,
                                 wrap=True, wrap_mode=Pango.WrapMode.WORD_CHAR)
         self._status.add_css_class("dim-label")
@@ -70,11 +86,16 @@ class ChatPanel(Gtk.Box):
         self.append(self._scroll)
         self.context_check = Gtk.CheckButton(label="주변 자막·메모 일부 함께 보내기", active=True)
         self.context_check.set_tooltip_text("현재 시각·질문·기존 대화는 항상 전달합니다. 모델 응답은 온라인으로 처리됩니다.")
-        self.append(self.context_check)
+        context_options = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        context_options.append(self.context_check)
         self.image_check = Gtk.CheckButton(label="메모 이미지 첨부", active=True)
         self.image_check.set_tooltip_text("현재 메모의 로컬 PNG·JPEG·WEBP 이미지 · 최대 4장/20MB · 전송 시 사용량에 포함")
         self.image_check.connect("toggled", lambda *_: self.refresh_images())
-        self.append(self.image_check)
+        context_options.append(self.image_check)
+        self._context_options = Gtk.Expander(label="전송 맥락: 자막·메모·이미지", child=context_options)
+        self.append(self._context_options)
+        for option in (self.context_check, self.image_check):
+            option.connect("toggled", lambda *_: self._sync_context_options())
         self._image_status = Gtk.Label(label="메모 이미지 없음", xalign=0, wrap=True,
                                        wrap_mode=Pango.WrapMode.WORD_CHAR)
         self._image_status.add_css_class("dim-label")
@@ -162,6 +183,7 @@ class ChatPanel(Gtk.Box):
         self._dirty = False
         self._save_failed = False
         self._input.get_buffer().set_text(self._drafts.get(str(path), ""))
+        self._render_captures()
         self.refresh_provider()
         self.refresh_context()
         self._render()
@@ -178,16 +200,25 @@ class ChatPanel(Gtk.Box):
 
     def refresh_images(self):
         if not self.image_check.get_active():
-            self._image_status.set_text("이미지는 보내지 않습니다")
+            self._image_status.set_text(f"메모 이미지 제외 · 화면 첨부 {len(self._captures.get(str(self._path), []))}장")
             return
         try:
             images = self._note_images()
             label = f"메모 이미지 {len(images)}장 · 전송 시 포함" if images else "메모 이미지 없음"
-            self._image_status.set_text(label)
+            self._image_status.set_text(label + f" · 화면 {len(self._captures.get(str(self._path), []))}장")
             self._image_status.set_tooltip_text("\n".join(p.name for p in images))
         except ImageError as exc:
             self._image_status.set_text(str(exc))
             self._image_status.set_tooltip_text(None)
+            self._context_options.set_expanded(True)
+
+    def _sync_context_options(self):
+        parts = []
+        if self.context_check.get_active():
+            parts.append("자막·메모")
+        if self.image_check.get_active():
+            parts.append("메모 이미지")
+        self._context_options.set_label("전송 맥락: " + ("·".join(parts) if parts else "대화·시각만"))
 
     def refresh_context(self):
         self.refresh_images()
@@ -213,6 +244,8 @@ class ChatPanel(Gtk.Box):
 
     def prepare_leave(self):
         self.cancel()
+        if self._study_preview is not None:
+            self._study_preview.close()
         return self._save()
 
     def _sync_buttons(self):
@@ -222,6 +255,8 @@ class ChatPanel(Gtk.Box):
         self.stop_button.set_sensitive(running)
         self._action_stack.set_visible_child_name("stop" if running else "send")
         self.new_button.set_sensitive(self.doc is not None and not running)
+        self.study_button.set_sensitive(self.doc is not None and bool(self.doc.messages) and not running)
+        self.capture_button.set_sensitive(self.doc is not None and not running)
         self.connection_button.set_sensitive(not self._checking and not running)
 
     def _on_key(self, _controller, key, _code, modifiers):
@@ -303,8 +338,10 @@ class ChatPanel(Gtk.Box):
                 self._status.set_text(hint)
                 return False
         try:
-            image_paths = self._note_images()
-        except ImageError as exc:
+            image_paths = self._request_images()
+            image_refs = [p.resolve().relative_to(self._path.parent.resolve()).as_posix()
+                          for p in image_paths]
+        except (ImageError, OSError, ValueError) as exc:
             self._status.set_text(str(exc))
             self.refresh_images()
             return False
@@ -323,12 +360,13 @@ class ChatPanel(Gtk.Box):
             child = self._messages.get_first_child()
             if child:
                 self._messages.remove(child)
-        user_message = {"role": "user", "content": text, "timestamp": self._position,
-                        "attachments": [p.name for p in image_paths]}
+        user_message = {"id": uuid.uuid4().hex, "role": "user", "content": text, "timestamp": self._position,
+                        "attachments": [p.name for p in image_paths],
+                        "image_refs": image_refs}
         self.doc.messages.append(user_message)
         self._add_message(user_message)
         self._answer = ""
-        self._answer_message = {"role": "assistant", "content": "", "timestamp": self._position,
+        self._answer_message = {"reply_to": user_message["id"], "role": "assistant", "content": "", "timestamp": self._position,
                                 "status": "completed", "provider": config["provider"]}
         self._answer_buffer, self._answer_button = self._add_message(self._answer_message)
         self._dirty = True
@@ -380,6 +418,9 @@ class ChatPanel(Gtk.Box):
 
     def _done(self, _cost, _usage):
         self._finish_answer()
+        self._captures.pop(str(self._path), None)
+        self._render_captures()
+        self.refresh_images()
         self._status.set_text("답변 완료 · 필요한 답변을 메모에 넣어 보세요.")
         self._save()
 
@@ -412,16 +453,100 @@ class ChatPanel(Gtk.Box):
         if notes.doc is None or notes.doc.path != notes.doc.path_for(path):
             self._status.set_text("메모를 먼저 열어 주세요.")
             return
-        stamp = format_stamp(message["timestamp"]) + " " if "timestamp" in message else ""
-        partial = " (미완료)" if message.get("status") in ("error", "interrupted") else ""
-        author = "OpenAI API" if message.get("provider") == "openai" else "Codex"
-        text = "\n\n### " + stamp + author + " 답변" + partial + "\n\n" + message.get("content", "") + "\n"
+        if self.append_note(qa_text(self.doc.messages, message), path):
+            button.set_label("메모에 넣음")
+            button.set_sensitive(False)
+
+    def append_note(self, text, path):
+        if path != self._path or path != getattr(self.window, "_current", None):
+            self._status.set_text("이 대화의 영상을 다시 열어 주세요.")
+            return False
+        self.window.toggle_notes(True)
+        notes = self.window._notes
+        if notes.doc is None or notes.doc.path != NoteDocument.path_for(path):
+            return False
+        # 이미 편집/외부 충돌이 있으면 먼저 해결한다. 삽입 후 저장 실패는 버퍼에서 보호한다.
+        if not notes.prepare_leave():
+            self._status.set_text("메모의 저장 문제를 먼저 해결하세요.")
+            return False
+        start = notes._buffer.get_char_count()
         notes._buffer.insert(notes._buffer.get_end_iter(), text)
-        notes.save()
-        button.set_label("메모에 넣음")
-        button.set_sensitive(False)
-        self.window.toast("답변을 메모에 넣었지만 저장하지 못했습니다. 메모의 저장 상태를 확인해 주세요."
-                          if notes.doc.dirty else "AI 답변을 메모 끝에 넣었습니다")
+        if not notes.save():
+            # 삽입분만 되돌려 재시도 중복을 막고 기존 메모/미리보기는 보존한다.
+            notes._buffer.delete(notes._buffer.get_iter_at_offset(start), notes._buffer.get_end_iter())
+            notes._cancel_autosave()
+            notes.doc.text = notes._text()
+            self._status.set_text("메모 저장 실패 — 원문을 보존했습니다. 저장 위치를 확인한 뒤 다시 시도하세요.")
+            return False
+        self.window.toast("학습메모에 내용을 추가했습니다")
+        return True
+
+    def make_study(self):
+        if self.doc is None or not self.doc.messages or self._runner is not None:
+            return
+        if self._study_preview is None:
+            self._study_preview = StudyPreview(self)
+        self._study_preview.present()
+
+    def _request_images(self):
+        paths = list(dict.fromkeys(self._note_images() + self._captures.get(str(self._path), [])))
+        if len(paths) > MAX_IMAGES:
+            raise ImageError("메모 이미지와 화면 첨부는 합계 최대 4장입니다. 첨부를 줄여 주세요.")
+        return paths
+
+    def capture_frame(self):
+        if self._runner is not None or self._path is None or self._path != getattr(self.window, "_current", None):
+            return False
+        captures = self._captures.setdefault(str(self._path), [])
+        try:
+            if len(self._request_images()) >= MAX_IMAGES:
+                raise ImageError("최대 4장까지 첨부할 수 있습니다. 기존 첨부를 제거하세요.")
+            assets = NoteDocument.assets_dir_for(self._path)
+            if not assets.resolve().is_relative_to(self._path.parent.resolve()):
+                raise ImageError("영상 폴더 밖으로 연결된 첨부 폴더는 사용할 수 없습니다.")
+            path = assets / ("agent-" + uuid.uuid4().hex + ".png")
+            self.window.player.screenshot(path, include_subs=True)
+            load_images([path], NoteDocument.path_for(self._path))
+        except ImageError as exc:
+            self._status.set_text(str(exc))
+            return False
+        except Exception:
+            self._status.set_text("영상 화면을 첨부하지 못했습니다. 영상 재생 상태와 첨부 개수·저장 권한을 확인하세요.")
+            return False
+        captures.append(path)
+        self._render_captures()
+        self.refresh_images()
+        self._status.set_text("현재 영상 화면을 첨부했습니다. 질문을 입력하고 보내세요.")
+        return True
+
+    def _render_captures(self):
+        child = self._capture_box.get_first_child()
+        while child is not None:
+            following = child.get_next_sibling()
+            self._capture_box.remove(child)
+            child = following
+        for path in self._captures.get(str(self._path), []):
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            try:
+                thumbnail = GdkPixbuf.Pixbuf.new_from_file_at_scale(str(path), 56, 36, True)
+                picture = Gtk.Image.new_from_pixbuf(thumbnail)
+                picture.set_pixel_size(56)
+            except GLib.Error:
+                picture = Gtk.Image.new_from_icon_name("image-missing-symbolic")
+            picture.set_tooltip_text("현재 영상 캡처 · " + path.name)
+            box.append(picture)
+            remove = Gtk.Button(label="제거", tooltip_text="전송 첨부에서 제거 · 저장된 이미지 파일은 유지")
+            remove.connect("clicked", lambda _button, p=path: self._remove_capture(p))
+            box.append(remove)
+            self._capture_box.append(box)
+        self._capture_box.set_visible(bool(self._captures.get(str(self._path))))
+
+    def _remove_capture(self, path):
+        captures = self._captures.get(str(self._path), [])
+        if path in captures:
+            captures.remove(path)
+        self._render_captures()
+        self.refresh_images()
 
     def _check_connection(self, *_args):
         if self._checking:
