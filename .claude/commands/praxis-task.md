@@ -6,7 +6,9 @@ Use this procedure when the user asks to start a task, check progress or verify
 work. Explain the result in the user's language; users need not learn commands.
 The executable lives in `harness/`, shared by Claude Code and Codex.
 
-First read `harness/config/profile.json`. Bora uses development. If the type is unset, select development with
+Read `harness/config/sharing` first (missing means personal). Keep harness and development records local; never force-add them. If the local harness is absent, follow docs/README.md to install it. Public guides and reviewed summaries can be committed.
+
+Then read `harness/config/profile.json`. Bora uses development. If the type is unset, select development with
 `node harness/bin/praxis.mjs profile select development` before creating a task.
 If it is `infrastructure`, read `harness/profiles/infrastructure/README.md`,
 explain pending reference-project integration and stop; do not run development

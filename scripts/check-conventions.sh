@@ -25,6 +25,8 @@ set -euo pipefail
 # pathspecs, and AREA regexes agree no matter where the script was invoked from.
 cd "$(git rev-parse --show-toplevel)"
 
+bash scripts/check-sharing.sh "${1:-}"
+
 # ── Config (tune these for your project) ────────────────────────────────────
 # 버전은 릴리스 단위로 변경한다. 코드/문서 커밋마다 bump를 요구하지 않는다.
 # 제품 버전과 배포 규칙: docs/RELEASING.md

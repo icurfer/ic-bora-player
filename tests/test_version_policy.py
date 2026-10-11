@@ -33,7 +33,8 @@ def test_debian_candidate_sorts_before_final():
 
 @pytest.fixture
 def repo(tmp_path, monkeypatch):
-    for filename in ['scripts/check-conventions.sh', 'scripts/check_taboo.py', 'scripts/version_policy.py']:
+    for filename in ['scripts/check-conventions.sh', 'scripts/check-sharing.sh',
+                     'scripts/check_taboo.py', 'scripts/version_policy.py']:
         target = tmp_path / filename
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(ROOT / filename, target)

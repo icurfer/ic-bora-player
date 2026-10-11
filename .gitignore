@@ -24,3 +24,11 @@ build/
 
 # 개인 작업 기록과 검증 결과
 /harness/.state/
+
+# 프로젝트 선택: 개인용 하네스와 상세 개발 기록은 로컬 보존
+/harness/
+/docs/requirements/
+/docs/spec/
+/docs/scope/
+/docs/deferred/
+/docs/done/

@@ -22,10 +22,9 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           python3 scripts/version_policy.py --release-tag "$RELEASE_TAG"
-          node harness/bin/praxis.mjs task init ci-verification --title "Verify current commit" --size small
-          node harness/bin/praxis.mjs task check ci-verification
-          BORA_TEST_PYTHON=/usr/bin/python3 node harness/bin/praxis.mjs task validate ci-verification
-          node harness/bin/praxis.mjs task status ci-verification
+          bash scripts/check-index-clean.sh
+          bash scripts/check-conventions.sh --all
+          BORA_TEST_PYTHON=/usr/bin/python3 bash scripts/check-python-tests.sh
       - name: Report test failures
         if: failure()
         run: |
