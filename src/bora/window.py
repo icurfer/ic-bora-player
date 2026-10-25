@@ -304,6 +304,11 @@ class BoraWindow(Adw.ApplicationWindow):
         self.player.volume = self.player.volume + delta
         self._vol_scale.set_value(self.player.volume)
 
+    def _on_volume_changed(self, scale):
+        self.player.volume = scale.get_value()
+        self.state.settings.volume = self.player.volume
+        scale.set_tooltip_text(f"볼륨 {self.player.volume:g}% · 위/아래 화살표 · 100% 초과는 증폭")
+
     def _nudge_speed(self, delta: float) -> None:
         self.player.speed = self.player.speed + delta
         self.state.settings.speed = self.player.speed
@@ -1749,11 +1754,11 @@ class BoraWindow(Adw.ApplicationWindow):
         box.append(self._dur_label)
 
         vol = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, draw_value=False, width_request=100)
-        vol.set_range(0, 100)
+        vol.set_range(0, 130)
         vol.set_value(self.player.volume)
-        vol.connect("value-changed", lambda s: setattr(self.player, "volume", s.get_value()))
+        vol.connect("value-changed", self._on_volume_changed)
         self._vol_scale = vol
-        vol.set_tooltip_text("볼륨 (위/아래 화살표)")
+        vol.set_tooltip_text(f"볼륨 {self.player.volume:g}% · 위/아래 화살표 · 100% 초과는 증폭")
         box.append(Gtk.Image(icon_name="audio-volume-high-symbolic"))
         box.append(vol)
 
@@ -1799,6 +1804,7 @@ class BoraWindow(Adw.ApplicationWindow):
             logmod.add_log_file(str(self._log_file_target()))
         self.player.speed = st.speed
         self.player.volume = st.volume
+        self._vol_scale.set_value(self.player.volume)
         self.player.set_sub_style(font=st.sub_font, size=st.sub_font_size,
                                   color=st.sub_color, pos=st.sub_pos)
 

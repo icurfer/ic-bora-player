@@ -10,7 +10,8 @@ import time
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[4]
-sys.path.insert(0, str(ROOT / 'src'))
+if os.environ.get('BORA_VERIFY_INSTALLED') != '1':
+    sys.path.insert(0, str(ROOT / 'src'))
 
 
 def main():
@@ -177,10 +178,24 @@ def main():
                             'testsrc2=size=320x240:rate=10:duration=4', '-c:v', 'libx264',
                             '-preset', 'ultrafast', str(video)], check=True, timeout=30)
             video.with_suffix('.srt').write_text('1\n00:00:00,000 --> 00:00:03,900\n학습 검토 자막\n', encoding='utf-8')
+            initial = State()
+            initial.settings.volume = 80
+            initial.save()
             app = BoraApplication(non_unique=True)
             app.register(None)
             app.activate()
             window = app.props.active_window
+            check('저장 볼륨80과 시작 슬라이더 일치', window.player.volume == 80
+                  and window._vol_scale.get_value() == 80)
+            window._nudge_volume(45)
+            check('100 초과 증폭 슬라이더와 실제 볼륨 일치', window.player.volume == 125
+                  and window._vol_scale.get_value() == 125)
+            window._nudge_volume(20)
+            check('볼륨 증폭 상한130 일치', window.player.volume == 130
+                  and window._vol_scale.get_value() == 130)
+            window._vol_scale.set_value(100)
+            check('슬라이더100은 실제100과 설정값 일치', window.player.volume == 100
+                  and window.state.settings.volume == 100 and '100%' in window._vol_scale.get_tooltip_text())
             window.state = State(folder / 'state')
             window.player.volume = 0
             window.player._mpv.hwdec = 'no'
