@@ -1,7 +1,7 @@
 """대화 원본을 유지하고 해당 답변의 질문을 연결한다."""
 from copy import deepcopy
 
-from bora.ai.study import qa_text, transcript
+from bora.ai.study import qa_text, transcript, pending_transcript, message_marker
 from bora.ai.history import Conversation
 
 
@@ -45,3 +45,32 @@ def test_export_retains_local_image_links_without_external_paths():
                          ['강의.assets/장면 (1).png', '../outside.png', '/etc/passwd', 'https://example.com/x']}])
     assert result.count('![대화 첨부]') == 1
     assert '%28' in result and 'outside' not in result and 'https:' not in result
+
+
+def test_auto_notes_keep_timestamps_and_only_append_new_turns():
+    messages = [{'role': 'user', 'content': '질문', 'timestamp': 13},
+                {'role': 'assistant', 'content': '답변', 'timestamp': 13}]
+    saved = '사용자가 작성한 생각\n' + pending_transcript(messages, '')
+    assert '[00:00:13]' in saved and '질문' in saved and '답변' in saved
+    assert pending_transcript(deepcopy(messages), saved) == ''
+    messages.append({'role': 'user', 'content': '다음 질문', 'timestamp': 27})
+    added = pending_transcript(messages, saved)
+    assert '[00:00:27]' in added and '다음 질문' in added and '답변' not in added
+
+
+def test_identical_legacy_turns_are_not_dropped():
+    message = {'role': 'user', 'content': '한 번 더', 'timestamp': 0}
+    messages = [message, deepcopy(message)]
+    first = pending_transcript(messages[:1], '')
+    second = pending_transcript(messages, first)
+    assert message_marker(message, 0) != message_marker(message, 1)
+    assert second.count('한 번 더') == 1
+
+
+def test_auto_notes_keep_unanswered_and_interrupted_turns():
+    messages = [{'role': 'user', 'content': '아직 답변 없는 질문', 'timestamp': 21},
+                {'role': 'assistant', 'content': '중지한 답변', 'status': 'interrupted', 'timestamp': 21}]
+    before = deepcopy(messages)
+    text = pending_transcript(messages, '')
+    assert '미완료' in text and '아직 답변 없는 질문' in text
+    assert messages == before

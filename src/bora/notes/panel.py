@@ -590,6 +590,10 @@ class NotePanel(Gtk.Box):
         editing = self._cursor_line()
         offset = 0
         for lineno, line in enumerate(text.split("\n")):
+            if re.fullmatch(r'<!-- bora-chat:[0-9a-f]{64} -->', line):
+                self._hide(offset, offset + len(line))
+                offset += len(line) + 1
+                continue
             reveal = (lineno == editing)        # 편집 중인 줄은 원본을 보여 준다
             self._retag_line(line, offset, reveal)
             offset += len(line) + 1

@@ -1,4 +1,4 @@
-"""영상별 Codex 대화. 메모는 사용자가 답변을 넣을 때만 바꾼다."""
+"""영상별 Codex 대화. 닫기와 영상 전환에서 새 대화를 시각과 함께 메모에 보존한다."""
 
 from __future__ import annotations
 
@@ -22,7 +22,8 @@ from .history import Conversation
 from ..notes.model import format_stamp
 from ..ui import PANEL_WIDTH
 from ..notes.model import NoteDocument
-from .study import qa_text, StudyPreview
+from .study import qa_text, StudyPreview, pending_transcript, message_marker, question_for
+from .markdown import MarkdownView
 
 
 class ChatPanel(Gtk.Box):
@@ -63,12 +64,16 @@ class ChatPanel(Gtk.Box):
         self.new_button = Gtk.Button(icon_name="document-new-symbolic", tooltip_text="새 대화")
         self.new_button.connect("clicked", self._confirm_new)
         header.append(self.new_button)
+        self.close_button = Gtk.Button(icon_name="window-close-symbolic",
+                                       tooltip_text="대화를 메모에 기록하고 학습 에이전트 닫기")
+        self.close_button.connect("clicked", lambda *_: self.window.toggle_agent())
+        header.append(self.close_button)
         self.append(header)
         tools = Gtk.Box(spacing=6)
         self.capture_button = Gtk.Button(label="화면 첨부", tooltip_text="현재 영상 프레임 캡처 · 자막 포함")
         self.capture_button.connect("clicked", lambda *_: self.capture_frame())
         tools.append(self.capture_button)
-        self.study_button = Gtk.Button(label="학습메모 만들기", tooltip_text="대화 원문 또는 AI 요약을 검토해 메모에 추가")
+        self.study_button = Gtk.Button(label="학습메모 AI 요약", tooltip_text="전체 메모를 AI로 요약 · 현재 연결의 사용량 적용")
         self.study_button.connect("clicked", lambda *_: self.make_study())
         tools.append(self.study_button)
         self.append(tools)
@@ -158,11 +163,11 @@ class ChatPanel(Gtk.Box):
         self._input.get_buffer().set_text(text)
         self.focus_editor()
 
-    def load_for(self, path):
+    def load_for(self, path, *, prepared=False):
         path = Path(path)
         if self._path == path and self.doc is not None:
             return True
-        if not self.prepare_leave():
+        if not prepared and not self.prepare_leave():
             return False
         if self._path is not None:
             self._drafts[str(self._path)] = self._text(self._input.get_buffer())
@@ -244,9 +249,21 @@ class ChatPanel(Gtk.Box):
 
     def prepare_leave(self):
         self.cancel()
+        if not self._save():
+            return False
+        if not self.record_notes():
+            return False
         if self._study_preview is not None:
             self._study_preview.close()
-        return self._save()
+        return True
+
+    def record_notes(self):
+        if self.doc is None or not self.doc.messages:
+            return True
+        if not self.window._ensure_notes():
+            return False
+        text = pending_transcript(self.doc.messages, self.window._notes._text())
+        return not text or self.append_note(text, self._path, reveal=False)
 
     def _sync_buttons(self):
         running = self._runner is not None
@@ -255,7 +272,7 @@ class ChatPanel(Gtk.Box):
         self.stop_button.set_sensitive(running)
         self._action_stack.set_visible_child_name("stop" if running else "send")
         self.new_button.set_sensitive(self.doc is not None and not running)
-        self.study_button.set_sensitive(self.doc is not None and bool(self.doc.messages) and not running)
+        self.study_button.set_sensitive(self.doc is not None and not running)
         self.capture_button.set_sensitive(self.doc is not None and not running)
         self.connection_button.set_sensitive(not self._checking and not running)
 
@@ -275,7 +292,7 @@ class ChatPanel(Gtk.Box):
         if not self.doc or not self.doc.messages:
             text = ("이 영상의 대화 기록을 열 수 없습니다.\n기존 기록은 보존했습니다."
                     if self._path is not None and self.doc is None else
-                    "영상에서 궁금한 내용을 물어보세요.\n답변은 ‘메모에 넣기’로 옮길 수 있습니다.")
+                    "영상에서 궁금한 내용을 물어보세요.\n닫을 때 새 대화를 영상 시각과 함께 메모에 기록합니다.")
             label = Gtk.Label(label=text,
                               wrap=True, xalign=0)
             label.add_css_class("dim-label")
@@ -301,13 +318,19 @@ class ChatPanel(Gtk.Box):
         box.append(title)
         buffer = Gtk.TextBuffer()
         buffer.set_text(message.get("content", ""))
-        view = Gtk.TextView(buffer=buffer, editable=False, cursor_visible=False,
-                            wrap_mode=Gtk.WrapMode.WORD_CHAR, can_focus=True)
+        view = (MarkdownView(buffer) if assistant else
+                Gtk.TextView(buffer=buffer, editable=False, cursor_visible=False,
+                             wrap_mode=Gtk.WrapMode.WORD_CHAR, can_focus=True))
         box.append(view)
         button = None
         if assistant:
-            button = Gtk.Button(label="메모에 넣기", halign=Gtk.Align.START,
-                                sensitive=complete and bool(message.get("content")))
+            index = next((i for i, item in enumerate(self.doc.messages) if item is message), None)
+            notes = self.window._notes
+            recorded = (index is not None and notes.doc is not None
+                        and notes.doc.path == NoteDocument.path_for(self._path)
+                        and message_marker(message, index) in notes._text())
+            button = Gtk.Button(label="메모에 넣음" if recorded else "메모에 넣기", halign=Gtk.Align.START,
+                                sensitive=complete and bool(message.get("content")) and not recorded)
             path = self._path
             button.connect("clicked", lambda b: self._insert_note(b, path, message))
             box.append(button)
@@ -421,7 +444,7 @@ class ChatPanel(Gtk.Box):
         self._captures.pop(str(self._path), None)
         self._render_captures()
         self.refresh_images()
-        self._status.set_text("답변 완료 · 필요한 답변을 메모에 넣어 보세요.")
+        self._status.set_text("답변 완료 · 닫을 때 새 대화를 메모에 자동 기록합니다.")
         self._save()
 
     def _error(self, message):
@@ -453,15 +476,23 @@ class ChatPanel(Gtk.Box):
         if notes.doc is None or notes.doc.path != notes.doc.path_for(path):
             self._status.set_text("메모를 먼저 열어 주세요.")
             return
-        if self.append_note(qa_text(self.doc.messages, message), path):
+        if message_marker(message, self.doc.messages.index(message)) in notes._text():
+            button.set_label("메모에 넣음")
+            button.set_sensitive(False)
+            return
+        question = question_for(self.doc.messages, message)
+        markers = '\n'.join(message_marker(m, self.doc.messages.index(m))
+                            for m in (question, message) if m is not None)
+        if self.append_note(qa_text(self.doc.messages, message) + '\n' + markers + '\n', path):
             button.set_label("메모에 넣음")
             button.set_sensitive(False)
 
-    def append_note(self, text, path):
+    def append_note(self, text, path, *, reveal=True):
         if path != self._path or path != getattr(self.window, "_current", None):
             self._status.set_text("이 대화의 영상을 다시 열어 주세요.")
             return False
-        self.window.toggle_notes(True)
+        if reveal:
+            self.window.toggle_notes(True)
         notes = self.window._notes
         if notes.doc is None or notes.doc.path != NoteDocument.path_for(path):
             return False
@@ -479,13 +510,18 @@ class ChatPanel(Gtk.Box):
             self._status.set_text("메모 저장 실패 — 원문을 보존했습니다. 저장 위치를 확인한 뒤 다시 시도하세요.")
             return False
         self.window.toast("학습메모에 내용을 추가했습니다")
+        self._status.set_text("메모에 기록했습니다. 닫을 때 새 대화만 추가합니다.")
         return True
 
-    def make_study(self):
-        if self.doc is None or not self.doc.messages or self._runner is not None:
+    def make_study(self, *, summarize=True):
+        if self.doc is None or self._runner is not None:
+            return
+        if not self.record_notes():
             return
         if self._study_preview is None:
             self._study_preview = StudyPreview(self)
+            if summarize:
+                self._study_preview.summarize()
         self._study_preview.present()
 
     def _request_images(self):

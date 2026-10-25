@@ -142,3 +142,11 @@ def test_asterisk_without_pair_is_left_alone(panel) -> None:
     """곱하기 기호 같은 홑 별표를 마크업으로 오해하면 안 된다."""
     prepare(panel, "2 * 3 = 6\n", cursor_line=5)
     assert tags_at(panel, 2) == set()
+
+
+def test_chat_record_marker_is_hidden_but_saved(panel):
+    marker = '<!-- bora-chat:' + 'a' * 64 + ' -->'
+    source = '### [00:00:13] 질문\n생각\n' + marker + '\n'
+    prepare(panel, source, cursor_line=2)
+    assert 'hidden' in tags_at(panel, source.index(marker))
+    assert panel._text() == source

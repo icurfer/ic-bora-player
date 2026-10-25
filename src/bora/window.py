@@ -101,6 +101,11 @@ class BoraWindow(Adw.ApplicationWindow):
         root.append(self._header_revealer)
 
         self._video = MpvGLArea(self.player)
+        self._video.set_focusable(True)
+        video_click = Gtk.GestureClick(button=Gdk.BUTTON_PRIMARY)
+        video_click.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        video_click.connect("pressed", lambda *_: self._video.grab_focus())
+        self._video.add_controller(video_click)
         # 지운 구간을 지날 때 덮는 검은 판. 편집기들이 그러듯 "여기는 빠진다"를
         # 재생 중에 눈으로 보여 준다. CSS 없이 직접 칠한다(프로바이더를 늘리지 않으려고).
         self._blackout = Gtk.DrawingArea(can_target=False, visible=False)
@@ -302,7 +307,25 @@ class BoraWindow(Adw.ApplicationWindow):
     def _nudge_speed(self, delta: float) -> None:
         self.player.speed = self.player.speed + delta
         self.state.settings.speed = self.player.speed
-        self.toast(f"재생 속도 {self.player.speed:g}x")
+        self._show_speed()
+
+    def _show_speed(self):
+        title = f"재생 속도 {self.player.speed:g}x"
+        self._last_toast_title = title
+        current = getattr(self, '_speed_toast', None)
+        if current is not None:
+            current.set_title(title)
+            # 같은 알림을 다시 추가하면 표시 시간이 갱신되고 대기열에 쌓이지 않는다.
+            self._toasts.add_toast(current)
+            return
+        current = Adw.Toast(title=title, timeout=2, priority=Adw.ToastPriority.HIGH)
+        self._speed_toast = current
+        current.connect('dismissed', self._speed_dismissed)
+        self._toasts.add_toast(current)
+
+    def _speed_dismissed(self, toast):
+        if getattr(self, '_speed_toast', None) is toast:
+            self._speed_toast = None
 
     def _nudge_sub_delay(self, delta: float) -> None:
         self.player.sub_delay = self.player.sub_delay + delta
@@ -676,7 +699,7 @@ class BoraWindow(Adw.ApplicationWindow):
         if button.get_active():
             self.player.speed = value
             self.state.settings.speed = value
-            self.toast(f"재생 속도 {value:g}x")
+            self._show_speed()
 
     # 국내 자막에 흔히 쓰는 글꼴을 앞에 두고, 시스템에 실제로 있는 것만 보여 준다.
     PREFERRED_FONTS = ("Noto Sans CJK KR", "Noto Sans KR", "NanumGothic", "NanumBarunGothic",
@@ -777,8 +800,12 @@ class BoraWindow(Adw.ApplicationWindow):
 
     def toggle_agent(self):
         if self._chat_open:
+            if not self._chat.prepare_leave():
+                self.toast("대화를 메모에 저장하지 못했습니다. 저장 문제를 해결한 뒤 닫아 주세요.")
+                return
             self._chat_open = False
             self._sync_study()
+            self._video.grab_focus()
         else:
             self.show_chat()
 
@@ -1835,7 +1862,8 @@ class BoraWindow(Adw.ApplicationWindow):
         if self._notes.doc is not None or self._notes_open:
             if not self._notes.load_for(path, path.stem):
                 return
-        if not self._chat.load_for(path):
+        # 이전 영상의 기록은 위에서 저장했다. 새 메모를 연 뒤 다시 저장하면 안 된다.
+        if not self._chat.load_for(path, prepared=True):
             self._study.set_visible(True)
             return
         self._remember_position()          # 넘어가기 전에 지금 파일 위치를 남긴다

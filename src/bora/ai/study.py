@@ -1,5 +1,8 @@
 """저장된 대화를 학습메모 원문/요약으로 만든다. 원본 대화는 변경하지 않는다."""
 from copy import deepcopy
+import hashlib
+import json
+import re
 from pathlib import PurePosixPath
 from urllib.parse import quote
 
@@ -63,6 +66,22 @@ def transcript(messages):
     return '\n\n'.join(parts) + '\n'
 
 
+def message_marker(message, index):
+    payload = json.dumps([index, message], ensure_ascii=False, sort_keys=True)
+    return '<!-- bora-chat:' + hashlib.sha256(payload.encode()).hexdigest() + ' -->'
+
+
+def pending_transcript(messages, note):
+    """메모와 저장 표시를 함께 기록해 재시작과 저장 재시도에서도 중복을 막는다."""
+    parts = []
+    for index, message in enumerate(messages):
+        marker = message_marker(message, index)
+        if marker not in note:
+            # 발언별 영상 시각을 유지한다. 답변만 나중에 도착해도 시각이 남는다.
+            parts.append(transcript([message]).removeprefix('## 학습 대화 원문\n\n').strip() + '\n' + marker)
+    return '\n\n' + '\n\n'.join(parts) + '\n' if parts else ''
+
+
 class StudyPreview(Gtk.Window):
     """사용자가 확인한 텍스트만 메모에 추가한다. 생성 중에는 적용할 수 없다."""
     def __init__(self, panel):
@@ -71,7 +90,7 @@ class StudyPreview(Gtk.Window):
         self.panel, self.path = panel, panel._path
         self.messages = deepcopy(panel.doc.messages)
         self.source = transcript(self.messages)
-        self.note_source = panel.window._notes._text()
+        self.note_source = re.sub(r'<!-- bora-chat:[0-9a-f]{64} -->\n?', '', panel.window._notes._text())
         self.runner = None
         self.generation = 0
         self.closed = False
@@ -82,7 +101,7 @@ class StudyPreview(Gtk.Window):
         self.original_button = Gtk.Button(label='대화 원문')
         self.original_button.connect('clicked', lambda *_: self.original())
         row.append(self.original_button)
-        self.summary_button = Gtk.Button(label='AI 요약 만들기')
+        self.summary_button = Gtk.Button(label='전체 메모 AI 요약')
         self.summary_button.set_tooltip_text('현재 선택한 AI로 대화를 요약합니다. 해당 연결의 사용량이 발생합니다.')
         self.summary_button.connect('clicked', lambda *_: self.summarize())
         row.append(self.summary_button)
@@ -134,7 +153,7 @@ class StudyPreview(Gtk.Window):
         self.stop()
         source = self.source
         if self.include_notes.get_active() and self.note_source.strip():
-            source = '## 사용자가 작성한 메모\n\n' + self.note_source + '\n\n' + source
+            source = '## 전체 학습메모\n\n' + self.note_source
         if len(source) > 60000:
             self.status.set_text('기록이 너무 깁니다(60,000자 초과). 원문 메모를 사용하세요. 내용을 잘라서 보내지 않았습니다.')
             return

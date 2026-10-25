@@ -125,6 +125,38 @@ def main():
                 x.XCloseDisplay(display)
             pump(.2)
 
+        def actual_click(widget):
+            assert os.environ.get('BORA_TEST_ISOLATED_X11') == '1'
+            from gi.repository import GdkX11
+            x, xt = ctypes.CDLL('libX11.so.6'), ctypes.CDLL('libXtst.so.6')
+            x.XOpenDisplay.restype = ctypes.c_void_p
+            x.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
+            x.XDefaultRootWindow.restype = ctypes.c_ulong
+            x.XTranslateCoordinates.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong,
+                                               ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_int),
+                                               ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_ulong)]
+            x.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
+            x.XCloseDisplay.argtypes = [ctypes.c_void_p]
+            xt.XTestFakeMotionEvent.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_ulong]
+            xt.XTestFakeButtonEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_int, ctypes.c_ulong]
+            display = x.XOpenDisplay(None)
+            assert display
+            try:
+                xid = GdkX11.X11Surface.get_xid(window.get_surface())
+                left, top, child = ctypes.c_int(), ctypes.c_int(), ctypes.c_ulong()
+                assert x.XTranslateCoordinates(display, xid, x.XDefaultRootWindow(display), 0, 0,
+                                              ctypes.byref(left), ctypes.byref(top), ctypes.byref(child))
+                ok, bounds = widget.compute_bounds(window)
+                assert ok and widget.get_mapped()
+                assert xt.XTestFakeMotionEvent(display, -1, left.value + int(bounds.get_x() + bounds.get_width() / 2),
+                                              top.value + int(bounds.get_y() + bounds.get_height() / 2), 0)
+                assert xt.XTestFakeButtonEvent(display, 1, 1, 0)
+                assert xt.XTestFakeButtonEvent(display, 1, 0, 0)
+                x.XSync(display, False)
+            finally:
+                x.XCloseDisplay(display)
+            pump(.2)
+
         class FakeRunner:
             def __init__(self, **callbacks):
                 self.callbacks = callbacks
@@ -179,6 +211,12 @@ def main():
             window.toggle_agent()
             check('닫기·재열기 대화와 초안 보존', chat.doc.messages == [question, answer]
                   and text(chat._input.get_buffer()) == '보존할 질문 초안')
+            saved_note = notes.doc.path.read_text()
+            check('닫을 때 대화 시각과 원문 자동 기록', '[00:00:01]' in saved_note
+                  and '[00:00:02]' in saved_note and saved_note.count(answer['content']) == 1)
+            window.toggle_agent()
+            window.toggle_agent()
+            check('변경 없이 닫고 다시 열어도 중복 없음', notes.doc.path.read_text() == saved_note)
             check('영상별 대화 재로드', Conversation(video).messages == chat.doc.messages)
             window.toggle_notes(False)
             check('메모 없이 실제 영상 캡처', chat.capture_frame() and not window._notes_open)
@@ -266,7 +304,7 @@ def main():
             check('저장 재시도 중복 없음', chat.append_note(retry_text, video)
                   and notes.doc.path.read_text().count(retry_text.strip()) == 1)
             note = notes.doc.path.read_text()
-            chat.make_study()
+            chat.make_study(summarize=False)
             preview = chat._study_preview
             pump()
             check('원문 미리보기', question['content'] in text(preview.buffer) and answer['content'] in text(preview.buffer))
@@ -296,7 +334,7 @@ def main():
                 preview.apply()
                 pump()
                 check('확인한 요약 메모 추가', '모의 학습 요약' in notes.doc.path.read_text())
-                chat.make_study()
+                chat.make_study(summarize=False)
                 preview = chat._study_preview
                 preview.summarize()
                 runners[-1].callbacks['on_error']('모의 요약 연결 오류')
@@ -320,6 +358,8 @@ def main():
                 stale = runners[-1]
                 other = folder / '다른 영상.mp4'
                 other.write_bytes(video.read_bytes())
+                chat.doc.messages.append({'role': 'user', 'content': '전환 전에 자동 기록', 'timestamp': 3})
+                chat._dirty = True
                 window.open_path(other)
                 pump(.3)
                 window.player.paused = True
@@ -328,6 +368,8 @@ def main():
                 check('영상 전환 시 요약 닫기·늦은 응답 차단', preview.closed and stale.cancelled
                       and chat._path == other and chat._study_preview is None
                       and '이전 영상' not in notes._text())
+                check('영상 교체는 이전 메모에만 새 대화 기록', '전환 전에 자동 기록' in video.with_suffix('.md').read_text()
+                      and '전환 전에 자동 기록' not in notes._text())
             window.open_path(video)
             pump(.3)
             window.player.paused = True
@@ -363,6 +405,68 @@ def main():
                 actual_key('period')
                 check('질문 입력 중 속도 키 보호', window.player.speed == before_speed
                       and text(chat._input.get_buffer()) != original_draft)
+                actual_click(window._video)
+                check('영상 실제 클릭으로 입력 포커스 해제', window.get_focus() is window._video)
+                paused = window.player.paused
+                actual_key('space')
+                check('영상 클릭 뒤 실제 Space 재생 전환', window.player.paused != paused)
+                window.player.paused = True
+                actual_key('period')
+                speed_toast = window._speed_toast
+                for _ in range(3):
+                    actual_key('period')
+                check('연속 속도 키는 같은 알림에 최신 값 즉시 반영', window._speed_toast is speed_toast
+                      and speed_toast.get_title() == f'재생 속도 {window.player.speed:g}x')
+                chat.doc.messages.append({'role': 'user', 'content': '닫을 때 저장 실패 검토', 'timestamp': 3})
+                chat._dirty = True
+                with patch.object(notes.doc, 'save', side_effect=OSError('모의 저장 실패')):
+                    actual_click(chat.close_button)
+                    check('닫기 저장 실패 시 패널과 대화 보존', window._chat_open
+                          and '닫을 때 저장 실패 검토' not in notes._text())
+                actual_click(chat.close_button)
+                check('실제 닫기 버튼은 자동 기록 후 영상 포커스', not window._chat_open
+                      and window.get_focus() is window._video
+                      and notes.doc.path.read_text().count('닫을 때 저장 실패 검토') == 1)
+                window.show_chat()
+                rich = '# 활성함수 비교\n**핵심 개념**과 `ReLU`\n\n| 종류 | 음수 입력 |\n|---|---|\n| ReLU | 0 |\n| Leaky ReLU | 작은 기울기 |\n\n```python\nf = max(0, x)\n```'
+                chat.doc.messages.append({'role': 'assistant', 'content': rich, 'timestamp': 3})
+                chat._dirty = True
+                chat._render()
+                pump(.2)
+                chat._to_bottom()
+                pump(.2)
+                shot('study-markdown-response')
+                check('표와 강조를 GTK 응답에서 표시', any(isinstance(w, Gtk.Grid) for w in descendants(chat._messages)))
+                window.set_default_size(640, 560)
+                pump(.3)
+                check('마크다운 긴 응답에서도 닫기·입력 접근', all(inside(w) for w in (chat.close_button, chat._input, chat.send_button)))
+                window.toggle_notes(False)
+                pump(.2)
+                chat._to_bottom()
+                pump(.2)
+                manager = Adw.StyleManager.get_default()
+                manager.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
+                pump(.3)
+                shot('study-markdown-light-narrow')
+                manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
+                pump(.3)
+                shot('study-markdown-dark-narrow')
+                with patch.object(api, 'load_config', return_value={'provider': 'codex'}), \
+                        patch.object(client, 'ensure_ready', return_value=(True, '모의 준비')), \
+                        patch.object(client, 'AskRunner', FakeRunner):
+                    chat.make_study()
+                    check('요약 버튼 한 번으로 전체 메모 요약 시작', chat._study_preview.runner is runners[-1]
+                          and '핀에서 떠오른 아이디어' in runners[-1].question.text
+                          and '활성함수 비교' in runners[-1].question.text)
+                    chat._study_preview.close()
+                chat.doc.messages.append({'role': 'user', 'content': '플레이어 종료 자동 기록', 'timestamp': 3})
+                chat._dirty = True
+                closing = window
+                window.close()
+                pump(.2)
+                check('플레이어 종료 전 새 대화 저장', not closing.player.alive
+                      and '플레이어 종료 자동 기록' in video.with_suffix('.md').read_text())
+                window = None
             else:
                 print('미검증: 격리 X11 플래그 없음, 실제 키입력 검사 생략', flush=True)
         except Exception as exc:
