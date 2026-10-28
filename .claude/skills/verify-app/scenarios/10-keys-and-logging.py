@@ -206,8 +206,9 @@ def main() -> int:
                     pump(0.45)
                     rect = win._menu_popover.get_pointing_to()[1]
                     _mm, size = win._menu_popover.get_child().get_preferred_size()
-                    inside = (rect.x - size.width / 2 >= -1
-                              and rect.x + size.width / 2 <= vw + 1)
+                    # 클릭점은 그대로 유지한다. 실제 팝업 화면 경계는 XTest 시나리오20에서 확인한다.
+                    inside = (0 <= rect.x < vw and 0 <= rect.y < vh
+                              and 0 < size.height <= win.get_height())
                     if not (inside and win._menu_popover.get_visible()):
                         bad.append(f"{label}→({rect.x},{rect.y})")
                     win._menu_popover.popdown()

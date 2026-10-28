@@ -76,7 +76,9 @@ class BoraWindow(Adw.ApplicationWindow):
         self._last_toast_title: str | None = None
         self._ai_settings = None
 
-        # 하위 메뉴 팝오버. 부모는 하단 메뉴 버튼에 붙인다.
+        # 하위 메뉴 내용의 보관소. 표시는 현재 열린 공통 메뉴의 페이지에서 한다.
+        self._active_menu = None
+        self._menu_page = None
         self._sub_popover = Gtk.Popover()
         self._audio_popover = Gtk.Popover()
         self._more_popover = Gtk.Popover()
@@ -353,127 +355,104 @@ class BoraWindow(Adw.ApplicationWindow):
         """
         self._menu_popover = Gtk.Popover(has_arrow=False, position=Gtk.PositionType.BOTTOM)
         self._menu_popover.set_parent(self._video)
+        self._menu_popover.connect('closed', self._menu_closed)
+        keys = Gtk.EventControllerKey()
+        keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        keys.connect('key-pressed', self._menu_key)
+        self._menu_popover.add_controller(keys)
         gesture = Gtk.GestureClick(button=Gdk.BUTTON_SECONDARY)
         gesture.connect("pressed", self._on_right_click)
         self._video.add_controller(gesture)
 
     def _on_right_click(self, _gesture, _n: int, x: float, y: float) -> None:
-        menu = self._build_context_menu()
-        self._menu_popover.set_child(self._scrollable_menu(menu))
-
-        # 메뉴가 화면 밖으로 나가지 않게 가리키는 점을 안쪽으로 당긴다.
-        # position=BOTTOM 은 클릭 지점을 **가로 중앙**으로 삼으므로, 오른쪽 끝에서 열면
-        # 절반이 잘려 나가 눌러도 안 열리는 것처럼 보였다.
-        #
-        # ⚠ 크기는 **자식**에서 잰다. 팝오버 자신은 아직 realize 되지 않아 0 을 준다 —
-        #    0 으로 clamp 하면 아무것도 보정되지 않는다(처음에 그렇게 짰다가 헛돌았다).
-        _minimum, natural = menu.get_preferred_size()
-        width = natural.width
-        height = min(natural.height, max(240, int(self.get_height() * 0.72)))
-        view_w, view_h = self._video.get_width(), self._video.get_height()
-
-        half = width / 2
-        at_x = min(max(x, half), max(half, view_w - half)) if view_w else x
-        # 아래로 펼 자리가 없으면 위로 편다.
-        below = view_h - y
-        if view_h and below < height and y > below:
-            self._menu_popover.set_position(Gtk.PositionType.TOP)
-            at_y = max(y, min(height, view_h))
-        else:
-            self._menu_popover.set_position(Gtk.PositionType.BOTTOM)
-            at_y = min(y, max(0, view_h - height)) if view_h else y
-
-        # ⚠ `Gdk.Rectangle(x=..., y=...)` 처럼 생성자 키워드로 주면 **조용히 무시되어 (0,0)** 이 된다.
-        #    (boxed 구조체라 PyGObject 가 키워드를 필드에 넣어 주지 않는다.)
-        #    메뉴가 클릭한 자리가 아니라 좌상단에 뜨던 진짜 원인이었다. 필드에 직접 대입해야 한다.
+        for popover in (self._main_popover, self._settings_popover):
+            popover.popdown()
+            popover.set_visible(False)
+        ok, bounds = self._video.compute_bounds(self)
+        window_y = y + (bounds.get_y() if ok else 0)
+        above, below = window_y, self.get_height() - window_y
+        self._menu_popover.set_position(Gtk.PositionType.TOP if above > below else Gtk.PositionType.BOTTOM)
+        self._prepare_menu(self._menu_popover, max_height=max(above, below) - 32)
         rect = Gdk.Rectangle()
-        rect.x, rect.y, rect.width, rect.height = int(at_x), int(at_y), 1, 1
+        rect.x = int(max(0, min(x, self._video.get_width() - 1)))
+        rect.y = int(max(0, min(y, self._video.get_height() - 1)))
+        rect.width = rect.height = 1
         self._menu_popover.set_pointing_to(rect)
+        # 실제 클릭점에 고정하고 화면 경계 보정은 GTK에 맡긴다.
         self._menu_popover.popup()
-        log.debug("우클릭 메뉴: 클릭 (%d, %d) → 표시 (%d, %d), 메뉴 %dx%d, 영상 %dx%d",
-                  int(x), int(y), int(at_x), int(at_y), width, height, view_w, view_h)
+        # GLArea는 자식 팝오버의 크기를 자동 할당하는 컨테이너가 아니다.
+        self._menu_popover.present()
 
     def _build_context_menu(self) -> Gtk.Widget:
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2,
-                      margin_top=6, margin_bottom=6, margin_start=6, margin_end=6)
-        if self._current is None:
-            return self._build_empty_context_menu(box)
-        play_label = "재생" if self.player.paused else "일시정지"
-        items = [
-            (play_label, "Space", self.toggle_pause),
-            ("재생 속도 느리게", ",", lambda: self._nudge_speed(-0.25)),
-            ("재생 속도 빠르게", ".", lambda: self._nudge_speed(0.25)),
-            ("정지 (처음으로)", "S", self.stop),
-            (None, None, None),
-            ("5초 뒤로", "←", lambda: self.player.seek_relative(-5)),
-            ("5초 앞으로", "→", lambda: self.player.seek_relative(5)),
-            (None, None, None),
-            ("자막 싱크 -0.1초", "[", lambda: self._nudge_sub_delay(-0.1)),
-            ("자막 싱크 +0.1초", "]", lambda: self._nudge_sub_delay(0.1)),
-            (None, None, None),
-            ("전체화면 나가기" if self.is_fullscreen() else "전체화면", "F", self.toggle_fullscreen),
-            ("구간 반복", "A", self.cycle_loop),
-            ("장면 핀 · 메모 입력", "P", lambda: self.add_pin()),
-            ("장면 핀 · 입력 없이 저장", "Shift+P", lambda: self.add_pin(write_title=False)),
-            ("핀 목록", "", self._show_pin_menu),
-            (None, None, None),
-            ("편집 타임라인", "Ctrl+E", self.toggle_edit),
-            ("이 구간 클립으로 담기", "K", lambda: self.add_clip()),
-            ("클립 목록", "Shift+K", self.show_clips),
-            (None, None, None),
-            ("학습 메모", "M", self.toggle_notes),
-            ("자막 편집", "E", self.open_editor),
-            ("스크린샷 저장", "C", lambda: self.take_screenshot(True)),
-            ("파일 열기", "O", self.choose_file),
-        ]
-        for label, accel, handler in items:
-            if label is None:
-                box.append(Gtk.Separator(margin_top=3, margin_bottom=3))
-                continue
-            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=18)
-            row.append(Gtk.Label(label=label, xalign=0, hexpand=True))
-            row.append(Gtk.Label(label=accel, css_classes=["dim-label"], xalign=1))
-            button = Gtk.Button(child=row, has_frame=False)
-            button.connect("clicked", self._on_menu_item, handler)
-            box.append(button)
-        return box
+        return self._build_player_menu()
 
-    def _build_empty_context_menu(self, box: Gtk.Box) -> Gtk.Widget:
-        """영상이 없을 때의 우클릭 메뉴 — **할 수 있는 것만** 보여 준다.
+    def _prepare_menu(self, popover, *, max_height=None):
+        self._active_menu = popover
+        self._menu_page = None
+        stack = Gtk.Stack(hhomogeneous=True, vhomogeneous=True,
+                          transition_type=Gtk.StackTransitionType.NONE)
+        main = self._scrollable_menu(self._build_player_menu())
+        height = max(180, int(self.get_height() * .65))
+        if max_height is not None:
+            height = min(height, max(136, int(max_height)))
+        popover._menu_height = height
+        width = min(480, max(260, self.get_width() - 64))
+        main.set_min_content_height(height)
+        main.set_max_content_height(height)
+        main.set_min_content_width(width)
+        main.set_propagate_natural_width(False)
+        stack.set_size_request(width, height)
+        stack.add_named(main, 'main')
+        popover.set_child(stack)
+        # 이전에 열었던 메뉴의 크기를 다음 팝업에 재사용하지 않는다.
+        stack.get_preferred_size()
+        popover.queue_resize()
 
-        빈 창에서도 재생·정지·자막 싱크를 늘어놓았더니 정작 "파일 열기"가 열다섯 번째라
-        스크롤해야 보였다. 지금 할 수 있는 일은 파일을 여는 것뿐이다.
-        """
-        items: list = [("파일 열기…", "O", self.choose_file)]
-        recent = self.state.recent_items()
-        if recent:
-            items.append((None, None, None))
-            for item in recent[:6]:
-                label = item.title or Path(item.path).name
-                items.append((label, "", lambda p=item.path: self.open_path(Path(p))))
-        items.append((None, None, None))
-        items.append(("메뉴 열기", "", self._menu_button.popup))
+    def _menu_closed(self, popover):
+        if self._active_menu is popover:
+            self._active_menu = self._menu_page = None
+        if self.is_fullscreen():
+            self._reveal_ui()
 
-        for label, accel, handler in items:
-            if label is None:
-                box.append(Gtk.Separator(margin_top=3, margin_bottom=3))
-                continue
-            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=18)
-            row.append(Gtk.Label(label=label, xalign=0, hexpand=True,
-                                 ellipsize=Pango.EllipsizeMode.MIDDLE, max_width_chars=34))
-            row.append(Gtk.Label(label=accel, css_classes=["dim-label"], xalign=1))
-            button = Gtk.Button(child=row, has_frame=False)
-            button.connect("clicked", self._on_menu_item, handler)
-            box.append(button)
-        if not recent:
-            box.append(Gtk.Label(label="영상을 창에 끌어다 놓아도 열린다", xalign=0,
-                                 margin_top=6, margin_start=6,
-                                 css_classes=["dim-label"]))
-        return box
+    def _close_menus(self):
+        for popover in (self._main_popover, self._menu_popover, self._settings_popover):
+            popover.popdown()
+            popover.set_visible(False)
 
-    def _on_menu_item(self, _button, handler) -> None:
-        self._menu_popover.popdown()
-        handler()
+    def _menu_back(self, *_):
+        if self._active_menu is not None:
+            self._active_menu.get_child().set_visible_child_name('main')
+            self._menu_page = None
+
+    def _menu_key(self, _controller, key, _code, modifiers):
+        if self._menu_page is not None and (key == Gdk.KEY_Escape or (
+                key == Gdk.KEY_Left and modifiers & Gdk.ModifierType.ALT_MASK)):
+            self._menu_back()
+            return True
+        return False
+
+    def _set_submenu_child(self, popover, child):
+        if self._menu_page is not popover or self._active_menu is None:
+            popover.set_child(child)
+            return
+        stack = self._active_menu.get_child()
+        old = stack.get_child_by_name('page')
+        if old is not None:
+            stack.remove(old)
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        back = Gtk.Button(label='‹ 전체 메뉴', has_frame=False, halign=Gtk.Align.START)
+        back.connect('clicked', self._menu_back)
+        page.append(back)
+        scroller = child if isinstance(child, Gtk.ScrolledWindow) else self._scrollable_menu(child)
+        height = max(92, self._active_menu._menu_height - 44)
+        scroller.set_min_content_height(height)
+        scroller.set_max_content_height(height)
+        scroller.set_propagate_natural_width(False)
+        page.append(scroller)
+        stack.add_named(page, 'page')
+        stack.set_visible_child_name('page')
+        back.grab_focus()
+        self._active_menu.present()
 
     def _setup_motion(self) -> None:
         motion = Gtk.EventControllerMotion()
@@ -493,8 +472,8 @@ class BoraWindow(Adw.ApplicationWindow):
     def _hide_ui(self) -> bool:
         self._hide_ui_id = 0
         # 자막 메뉴를 열어 둔 채로 감추면 조작을 뺏는다.
-        busy = (self._sub_popover.get_visible() or self._menu_popover.get_visible()
-                or self._settings_popover.get_visible())
+        busy = any(p.get_visible() for p in (
+            self._main_popover, self._menu_popover, self._settings_popover))
         if self.is_fullscreen() and not busy:
             self._show_chrome(False)
         return False
@@ -694,11 +673,11 @@ class BoraWindow(Adw.ApplicationWindow):
         box.append(Gtk.Separator(margin_top=4))
         codex = Gtk.Button(label="AI 연결 · 로그인/API 키")
         def connect_codex(*_):
-            (target or self._more_popover).popdown()
+            self._close_menus()
             self.show_ai_settings()
         codex.connect("clicked", connect_codex)
         box.append(codex)
-        (target or self._more_popover).set_child(self._scrollable_menu(box))
+        self._set_submenu_child(target or self._more_popover, self._scrollable_menu(box))
 
     def _on_speed_toggled(self, button: Gtk.ToggleButton, value: float) -> None:
         if button.get_active():
@@ -767,8 +746,7 @@ class BoraWindow(Adw.ApplicationWindow):
         return False
 
     def _on_recent_clicked(self, _button, path: str) -> None:
-        self._more_popover.popdown()
-        self._settings_popover.popdown()
+        self._close_menus()
         self.open_path(Path(path))
 
     # ── 학습 메모 ────────────────────────────────────────────────────────
@@ -977,13 +955,13 @@ class BoraWindow(Adw.ApplicationWindow):
             cancel = Gtk.Button(label="취소", css_classes=["destructive-action"])
             cancel.connect("clicked", lambda *_: self._cancel_extract())
             box.append(cancel)
-            self._stt_popover.set_child(box)
+            self._set_submenu_child(self._stt_popover, box)
             return
 
         if not ready:
             label = Gtk.Label(label=hint, xalign=0, wrap=True, css_classes=["dim-label"])
             box.append(label)
-            self._stt_popover.set_child(box)
+            self._set_submenu_child(self._stt_popover, box)
             return
 
         box.append(Gtk.Label(label="음성에서 자막 만들기", xalign=0))
@@ -1012,7 +990,7 @@ class BoraWindow(Adw.ApplicationWindow):
         start = Gtk.Button(label="추출 시작", css_classes=["suggested-action"])
         start.connect("clicked", lambda *_: self.start_extract())
         box.append(start)
-        self._stt_popover.set_child(box)
+        self._set_submenu_child(self._stt_popover, box)
 
     def start_extract(self) -> bool:
         if self._current is None or (self._stt is not None and self._stt.running):
@@ -1037,7 +1015,7 @@ class BoraWindow(Adw.ApplicationWindow):
         if not self._stt.start(Extraction(self._current, output, model, lang)):
             self._stt = None
             return False
-        self._main_popover.popdown()
+        self._close_menus()
         self.toast(f"자막 추출 시작 ({model}) — 시간이 걸린다")
         self._rebuild_extract_menu()
         return True
@@ -1461,10 +1439,10 @@ class BoraWindow(Adw.ApplicationWindow):
             drop.connect("clicked", self._on_pin_removed, index)
             row.append(drop)
             box.append(row)
-        self._pin_popover.set_child(box)
+        self._set_submenu_child(self._pin_popover, box)
 
     def _on_pin_clicked(self, _button, pin: Pin) -> None:
-        self._pin_popover.popdown()
+        self._close_menus()
         self.goto_pin(pin)
 
     def _on_pin_removed(self, _button, index: int) -> None:
@@ -1491,66 +1469,96 @@ class BoraWindow(Adw.ApplicationWindow):
         scroller.set_child(box)
         return scroller
 
-    def _menu_row(self, label: str, accel: str, handler, subtitle: str = "") -> Gtk.Widget:
+    def _menu_row(self, label: str, accel: str, handler, subtitle: str = "", *, submenu=False,
+                  requires_media=False) -> Gtk.Widget:
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
-        text.append(Gtk.Label(label=label, xalign=0))
+        text.append(Gtk.Label(label=label, xalign=0, wrap=True,
+                              wrap_mode=Pango.WrapMode.WORD_CHAR))
         if subtitle:
-            text.append(Gtk.Label(label=subtitle, xalign=0, css_classes=["dim-label"]))
+            text.append(Gtk.Label(label=subtitle, xalign=0, wrap=True,
+                                  wrap_mode=Pango.WrapMode.WORD_CHAR, css_classes=["dim-label"]))
         row.append(text)
         if accel:
             row.append(Gtk.Label(label=accel, css_classes=["dim-label"], xalign=1))
         button = Gtk.Button(child=row, has_frame=False)
-        button.connect("clicked", lambda _b: self._run_menu_item(handler))
+        button.set_sensitive(not requires_media or self._current is not None)
+        button.connect("clicked", lambda _b: self._run_menu_item(handler, submenu=submenu))
         return button
 
-    def _run_menu_item(self, handler) -> None:
-        self._main_popover.popdown()
+    def _run_menu_item(self, handler, *, submenu=False) -> None:
+        if not submenu:
+            self._close_menus()
         handler()
 
     def _rebuild_main_menu(self) -> None:
+        self._menu_popover.popdown()
+        self._menu_popover.set_visible(False)
+        self._prepare_menu(self._main_popover)
+
+    def _build_player_menu(self) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2,
                       margin_top=8, margin_bottom=8, margin_start=8, margin_end=8,
                       width_request=300)
 
+        def action(label, accel, handler, *, media=True):
+            button = self._menu_row(label, accel, handler)
+            button.set_sensitive(not media or self._current is not None)
+            box.append(button)
+
+        action("재생" if self._current is None or self.player.paused else "일시정지", "Space", self.toggle_pause)
+        action("정지 (처음으로)", "S", self.stop)
+        action("재생 속도 느리게", ",", lambda: self._nudge_speed(-.25))
+        action("재생 속도 빠르게", ".", lambda: self._nudge_speed(.25))
+        action("5초 뒤로", "←", lambda: self.player.seek_relative(-5))
+        action("5초 앞으로", "→", lambda: self.player.seek_relative(5))
+        action("전체화면 나가기" if self.is_fullscreen() else "전체화면", "F", self.toggle_fullscreen, media=False)
+        action("구간 반복", "A", self.cycle_loop)
+        box.append(Gtk.Separator(margin_top=4, margin_bottom=4))
+
         box.append(self._menu_row("자막", "", self._show_subtitle_menu,
-                                  self._plan.summary() if self._plan else "자막 없음"))
+                                  self._plan.summary() if self._plan else "자막 없음", submenu=True))
         audio = self.player.audio_tracks
         box.append(self._menu_row("오디오 트랙", "", self._show_audio_menu,
-                                  f"{len(audio)}개" if audio else "없음"))
+                                  f"{len(audio)}개" if audio else "없음", submenu=True))
+        action("자막 싱크 -0.1초", "[", lambda: self._nudge_sub_delay(-.1))
+        action("자막 싱크 +0.1초", "]", lambda: self._nudge_sub_delay(.1))
         box.append(Gtk.Separator(margin_top=4, margin_bottom=4))
 
         box.append(self._menu_row("학습 메모", "Ctrl+M", self.toggle_notes,
-                                  "열려 있다" if self._notes_open else "영상 옆 .md 에 기록"))
+                                  "열려 있다" if self._notes_open else "영상 옆 .md 에 기록", requires_media=True))
         box.append(self._menu_row("외부 터미널로 파일 작업", "", self.open_agent_terminal,
-                                  "메모 상단에서 선택한 Codex / Claude Code"))
+                                  "메모 상단에서 선택한 Codex / Claude Code", requires_media=True))
         box.append(self._menu_row("학습 에이전트", "", self.show_chat,
-                                  "현재 영상에 대해 물어보기"))
+                                  "현재 영상에 대해 물어보기", requires_media=True))
+        action("장면 핀 · 메모 입력", "P", lambda: self.add_pin())
+        action("장면 핀 · 입력 없이 저장", "Shift+P", lambda: self.add_pin(write_title=False))
         box.append(self._menu_row("AI 연결 · 로그인/API 키", "", self.show_ai_settings,
                                   "ChatGPT 로그인 · 연결 확인"))
         ready, _hint = ensure_ready()
         box.append(self._menu_row("음성에서 자막 만들기", "", self._show_extract_menu,
-                                  "준비됨" if ready else "설치 필요"))
+                                  "준비됨" if ready else "설치 필요", submenu=True, requires_media=True))
         box.append(self._menu_row("자막 편집", "E", self.open_editor,
-                                  "재생 위치를 그 줄에 박는다"))
+                                  "재생 위치를 그 줄에 박는다", requires_media=True))
         box.append(Gtk.Separator(margin_top=4, margin_bottom=4))
 
         box.append(self._menu_row("화면·속도·자막 모양", "", self._show_more_menu,
-                                  f"{self.player.speed:g}x"))
+                                  f"{self.player.speed:g}x", submenu=True))
         pins = self.state.pins_for(self._current) if self._current else []
         box.append(self._menu_row("핀 목록", "", self._show_pin_menu,
-                                  f"{len(pins)}개" if pins else "꽂은 핀 없음"))
+                                  f"{len(pins)}개" if pins else "꽂은 핀 없음", submenu=True))
         box.append(self._menu_row(
             "편집 타임라인", "Ctrl+E", self.toggle_edit,
-            "접는다" if self.editing else "자르고 지워서 남길 것을 만든다"))
+            "접는다" if self.editing else "자르고 지워서 남길 것을 만든다", requires_media=True))
+        action("이 구간 클립으로 담기", "K", lambda: self.add_clip())
         box.append(self._menu_row(
             "클립 목록", "Shift+K", self.show_clips,
-            f"{len(self._clips)}개 담김" if self._clips else "담아 둔 구간"))
-        box.append(self._menu_row("스크린샷", "C", lambda: self.take_screenshot(True)))
+            f"{len(self._clips)}개 담김" if self._clips else "담아 둔 구간", requires_media=True))
+        action("스크린샷 저장", "C", lambda: self.take_screenshot(True))
         box.append(self._menu_row("파일 열기", "O", self.choose_file))
         box.append(self._menu_row(
             "로그", "", self._show_log_menu,
-            dict((l[0], l[1]) for l in logmod.LEVELS).get(logmod.level_name(), "")))
+            dict((l[0], l[1]) for l in logmod.LEVELS).get(logmod.level_name(), ""), submenu=True))
 
         recent = self.state.recent_items()
         if recent:
@@ -1560,7 +1568,7 @@ class BoraWindow(Adw.ApplicationWindow):
             for item in recent[:5]:
                 box.append(self._menu_row(item.title, "",
                                           lambda p=item.path: self.open_path(Path(p))))
-        self._main_popover.set_child(self._scrollable_menu(box))
+        return box
 
     def show_ai_settings(self):
         if self._ai_settings is None:
@@ -1607,7 +1615,7 @@ class BoraWindow(Adw.ApplicationWindow):
         where = logmod.log_file_path() or str(self._log_file_target())
         box.append(Gtk.Label(label=where, xalign=0, wrap=True, selectable=True,
                              css_classes=["dim-label"]))
-        self._log_popover.set_child(box)
+        self._set_submenu_child(self._log_popover, box)
 
     def _on_log_level(self, button: Gtk.CheckButton, name: str) -> None:
         if not button.get_active():
@@ -1630,12 +1638,11 @@ class BoraWindow(Adw.ApplicationWindow):
         self.state.save()
 
     def _popup_submenu(self, popover: Gtk.Popover, build) -> None:
-        """하위 메뉴를 메뉴 버튼 자리에 띄운다."""
+        """현재 메뉴 안에서 이동한다. 단축키로 열면 하단 메뉴를 진입점으로 쓴다."""
+        if self._active_menu is None or not self._active_menu.get_visible():
+            self._menu_button.popup()
+        self._menu_page = popover
         build()
-        if popover.get_parent() is None:
-            popover.set_parent(self._menu_button)
-            popover.set_position(Gtk.PositionType.TOP)
-        popover.popup()
 
     def _show_subtitle_menu(self) -> None:
         self._popup_submenu(self._sub_popover, self._rebuild_subtitle_menu)
@@ -1652,7 +1659,7 @@ class BoraWindow(Adw.ApplicationWindow):
         tracks = self.player.audio_tracks
         if not tracks:
             box.append(Gtk.Label(label="오디오 트랙 없음", css_classes=["dim-label"]))
-            self._audio_popover.set_child(box)
+            self._set_submenu_child(self._audio_popover, box)
             return
 
         box.append(Gtk.Label(label=f"오디오 {len(tracks)}개", xalign=0, css_classes=["dim-label"]))
@@ -1668,7 +1675,7 @@ class BoraWindow(Adw.ApplicationWindow):
                 btn.set_active(True)
             btn.connect("toggled", self._on_audio_toggled, track["id"])
             box.append(btn)
-        self._audio_popover.set_child(box)
+        self._set_submenu_child(self._audio_popover, box)
 
     def _on_audio_toggled(self, button: Gtk.CheckButton, track_id) -> None:
         if button.get_active():
@@ -1719,7 +1726,7 @@ class BoraWindow(Adw.ApplicationWindow):
         sync_row.append(self._sync_spin)
         box.append(sync_row)
 
-        self._sub_popover.set_child(box)
+        self._set_submenu_child(self._sub_popover, box)
 
     def _on_track_toggled(self, button: Gtk.CheckButton, track_id) -> None:
         if not button.get_active():
@@ -1783,6 +1790,11 @@ class BoraWindow(Adw.ApplicationWindow):
         self._main_popover = Gtk.Popover(position=Gtk.PositionType.TOP)
         self._menu_button.set_popover(self._main_popover)
         self._main_popover.connect("show", lambda *_: self._rebuild_main_menu())
+        self._main_popover.connect('closed', self._menu_closed)
+        keys = Gtk.EventControllerKey()
+        keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        keys.connect('key-pressed', self._menu_key)
+        self._main_popover.add_controller(keys)
         box.append(self._menu_button)
 
         self._fs_button = Gtk.Button(icon_name="view-fullscreen-symbolic",
