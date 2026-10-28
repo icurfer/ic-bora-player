@@ -1500,6 +1500,8 @@ class BoraWindow(Adw.ApplicationWindow):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2,
                       margin_top=8, margin_bottom=8, margin_start=8, margin_end=8,
                       width_request=300)
+        if self._current is None:
+            box.append(self._menu_row("파일 열기", "O", self.choose_file))
 
         def action(label, accel, handler, *, media=True):
             button = self._menu_row(label, accel, handler)
@@ -1555,7 +1557,8 @@ class BoraWindow(Adw.ApplicationWindow):
             "클립 목록", "Shift+K", self.show_clips,
             f"{len(self._clips)}개 담김" if self._clips else "담아 둔 구간", requires_media=True))
         action("스크린샷 저장", "C", lambda: self.take_screenshot(True))
-        box.append(self._menu_row("파일 열기", "O", self.choose_file))
+        if self._current is not None:
+            box.append(self._menu_row("파일 열기", "O", self.choose_file))
         box.append(self._menu_row(
             "로그", "", self._show_log_menu,
             dict((l[0], l[1]) for l in logmod.LEVELS).get(logmod.level_name(), ""), submenu=True))

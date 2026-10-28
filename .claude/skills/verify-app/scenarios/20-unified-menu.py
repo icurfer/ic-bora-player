@@ -222,6 +222,7 @@ def main():
                 print('빈 창 메뉴 기능 불일치:', sorted(set(empty_main) ^ set(empty_context)), flush=True)
             else:
                 check('빈 창 두 진입점의 동일 메뉴', empty_main == empty_context)
+                check('빈 창 파일 열기가 첫 항목', empty_main[0] == '파일 열기')
             window._menu_popover.popdown()
             window.open_path(video)
             pump(.6)
@@ -317,9 +318,11 @@ def main():
             choose('학습 메모')
             check('통합 메뉴 메모 열기와 원본 보호', window._notes_open and window._notes.doc.path==video.with_suffix('.md'))
             shot('unified-player')
-        except Exception:
+        except Exception as exc:
             import traceback
             traceback.print_exc()
+            message = str(exc).replace('%', '%25').replace('\n', '%0A').replace('\r', '%0D')
+            print(f'::error::Unified menu failed: {message}', flush=True)
             return 1
         finally:
             if window is not None:

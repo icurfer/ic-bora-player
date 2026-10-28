@@ -46,7 +46,17 @@ jobs:
       - name: Verify study agent on isolated display
         run: xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo BORA_TEST_ISOLATED_X11=1 /usr/bin/python3 .claude/skills/verify-app/scenarios/19-study-agent.py
       - name: Verify unified menus with a window manager
-        run: xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo BORA_TEST_ISOLATED_X11=1 /usr/bin/python3 .claude/skills/verify-app/scenarios/20-unified-menu.py
+        id: menus
+        run: xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo BORA_TEST_ISOLATED_X11=1 BORA_REVIEW_SHOTS="$RUNNER_TEMP/menu-screens" /usr/bin/python3 .claude/skills/verify-app/scenarios/20-unified-menu.py 2>&1 | tee "$RUNNER_TEMP/menu-verification.log"
+      - name: Preserve menu failure evidence
+        if: failure() && steps.menus.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: menu-verification-diagnostics
+          path: |
+            ${{ runner.temp }}/menu-verification.log
+            ${{ runner.temp }}/menu-screens/
+          retention-days: 7
       - name: Build and check development package
         run: |
           expected="$(python3 scripts/version_policy.py --development --debian)"
