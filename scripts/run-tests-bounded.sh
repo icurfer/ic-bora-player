@@ -20,11 +20,13 @@ if [ "${1:-}" = --inside ]; then
   ulimit -c 0
   drop=()
   if [ "${GITHUB_ACTIONS:-}" = true ] && [ "$(id -u)" = 0 ] && [ "${SUDO_UID:-0}" != 0 ]; then
-    drop=(sudo -n -E -u "#$SUDO_UID" -g "#$SUDO_GID")
+    # CI에서는 root로 장치를 격리한 다음 원래 사용자로 명령을 실행한다.
+    # 격리 전에 권한을 낮추면 실행 서버의 uid-map 제한에 걸린다.
+    drop=(setpriv --reuid="$SUDO_UID" --regid="$SUDO_GID" --init-groups)
   fi
   echo "테스트 보호: memory.max=$(cat "$control/memory.max") bytes, swap=0, GPU 장치 격리" >&2
-  exec "${drop[@]}" bwrap --bind / / --dev /dev --die-with-parent -- \
-    env GSK_RENDERER=cairo LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe \
+  exec bwrap --bind / / --dev /dev --die-with-parent -- \
+    "${drop[@]}" env GSK_RENDERER=cairo LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe \
     __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json \
     __GLX_VENDOR_LIBRARY_NAME=mesa VK_DRIVER_FILES="$vulkan" "$@"
 fi
@@ -53,12 +55,14 @@ exec 9>"$runtime/bora-tests.lock"
 flock -n 9 || fail '다른 테스트가 실행 중입니다. 종료 후 하나씩 실행하세요'
 runner=(systemd-run --user)
 manager=(systemctl --user)
-if ! systemctl --user show-environment >/dev/null 2>&1; then
-  # GitHub의 전용 실행 서버에서만 시스템 매니저 대안을 사용한다.
-  [ "${GITHUB_ACTIONS:-}" = true ] || fail '사용자 systemd에 연결할 수 없습니다'
+if [ "${GITHUB_ACTIONS:-}" = true ]; then
+  # CI에서는 사용자 버스 유무와 관계없이 장치 격리를 위한 root 경로를 쓴다.
   sudo -n true || fail 'CI systemd 권한이 없습니다'
+  command -v setpriv >/dev/null || fail 'CI setpriv 필요'
   runner=(sudo -n -E systemd-run)
   manager=(sudo -n systemctl)
+else
+  systemctl --user show-environment >/dev/null 2>&1 || fail '사용자 systemd에 연결할 수 없습니다'
 fi
 # 상위 slice도 제한해 중단 직후 남은 자식과 다음 실행의 합계까지 보호한다.
 "${manager[@]}" set-property --runtime bora-tests.slice "MemoryMax=$limit" MemorySwapMax=0

@@ -24,7 +24,7 @@ jobs:
         run: |
           bash scripts/check-index-clean.sh
           bash scripts/check-conventions.sh --all
-          python3 scripts/check-test-guard.py
+          BORA_TEST_CHECK_OOM=1 python3 scripts/check-test-guard.py
           BORA_TEST_PYTHON=/usr/bin/python3 bash scripts/check-python-tests.sh
       - name: Report test failures
         if: failure()
