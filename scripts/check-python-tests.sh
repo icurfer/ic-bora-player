@@ -6,6 +6,6 @@ TEST_PYTHON="${BORA_TEST_PYTHON:-python3}"
 args=(-m pytest -q)
 if [ -n "${RUNNER_TEMP:-}" ]; then args+=(--junitxml="$RUNNER_TEMP/tests.xml"); fi
 if command -v xvfb-run >/dev/null 2>&1; then
-  exec xvfb-run -a "$TEST_PYTHON" "${args[@]}"
+  exec bash scripts/run-tests-bounded.sh xvfb-run -a "$TEST_PYTHON" "${args[@]}" "$@"
 fi
-exec "$TEST_PYTHON" "${args[@]}"
+exec bash scripts/run-tests-bounded.sh "$TEST_PYTHON" "${args[@]}" "$@"

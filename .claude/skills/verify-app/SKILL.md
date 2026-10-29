@@ -29,12 +29,15 @@ description: Bora 변경을 실제로 재생시켜 검증하는 표준 절차 �
 
 ```bash
 # 전부 (01 만 영상 인자가 필요하다 — 나머지는 스스로 만들어 쓴다)
-python3 .claude/skills/verify-app/scenarios/01-playback-renders.py <영상파일>
+bash scripts/run-tests-bounded.sh python3 .claude/skills/verify-app/scenarios/01-playback-renders.py <영상파일>
 for f in .claude/skills/verify-app/scenarios/0[2-9]*.py \
          .claude/skills/verify-app/scenarios/1*.py; do
-  echo "▶ $(basename "$f")"; timeout 300 python3 "$f" | tail -3
+  echo "▶ $(basename "$f")"; bash scripts/run-tests-bounded.sh python3 "$f"
 done
 ```
+
+실행 보호와 기본 5GiB 상한은 [테스트 안내](../../../docs/TESTING.md)를 따른다.
+위 실행은 GPU 장치를 숨기므로 T6 하드웨어 가속 통과로 판정하지 않는다.
 
 | 시나리오 | 무엇을 보나 | 인자 |
 |---|---|---|

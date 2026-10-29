@@ -16,7 +16,7 @@ jobs:
         timeout-minutes: 5
         run: |
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y python3-pytest python3-gi python3-gi-cairo python3-pil gir1.2-gtk-4.0 gir1.2-adw-1 python3-mpv ffmpeg xvfb xauth libxtst6 fakeroot
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y python3-pytest python3-gi python3-gi-cairo python3-pil gir1.2-gtk-4.0 gir1.2-adw-1 python3-mpv ffmpeg xvfb xauth libxtst6 fakeroot bubblewrap libegl-mesa0
       - name: Verify release input
         env:
           RELEASE_TAG: ${{ github.ref_name }}
@@ -24,6 +24,7 @@ jobs:
           python3 scripts/version_policy.py --release-tag "$RELEASE_TAG"
           bash scripts/check-index-clean.sh
           bash scripts/check-conventions.sh --all
+          python3 scripts/check-test-guard.py
           BORA_TEST_PYTHON=/usr/bin/python3 bash scripts/check-python-tests.sh
       - name: Report test failures
         if: failure()
@@ -42,7 +43,7 @@ jobs:
                           print('::error::' + message)
           PYTEST
       - name: Verify terminal keyboard flow on isolated display
-        run: xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo BORA_TEST_ISOLATED_X11=1 /usr/bin/python3 .claude/skills/verify-app/scenarios/17-terminal-choice.py
+        run: bash scripts/run-tests-bounded.sh xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo BORA_TEST_ISOLATED_X11=1 /usr/bin/python3 .claude/skills/verify-app/scenarios/17-terminal-choice.py
       - name: Build and verify package
         run: |
           bash scripts/build-deb.sh --release

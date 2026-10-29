@@ -226,6 +226,13 @@ else
 fi
 
 # ── Result ──────────────────────────────────────────────────────────────────
+# GUI CI가 공통 메모리 보호 실행기를 우회하면 커밋을 막는다.
+for entrypoint in .github/workflows/ci.yml .github/workflows/release.yml scripts/check-python-tests.sh; do
+  if content "$entrypoint" | grep -En 'run: xvfb-run|exec xvfb-run|exec "\$TEST_PYTHON"'; then
+    err "$entrypoint: 테스트는 scripts/run-tests-bounded.sh를 사용해야 합니다"
+  fi
+done
+
 if [ "$fail" -ne 0 ]; then
   printf '\n%sCommit blocked.%s Fix the above, or bypass intentionally with %sgit commit --no-verify%s\n' \
     "$RED" "$RST" "$DIM" "$RST" >&2

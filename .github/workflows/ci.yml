@@ -19,11 +19,12 @@ jobs:
         timeout-minutes: 5
         run: |
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y python3-pytest python3-gi python3-gi-cairo python3-pil gir1.2-gtk-4.0 gir1.2-adw-1 python3-mpv ffmpeg xvfb xauth libxtst6 fakeroot openbox
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y python3-pytest python3-gi python3-gi-cairo python3-pil gir1.2-gtk-4.0 gir1.2-adw-1 python3-mpv ffmpeg xvfb xauth libxtst6 fakeroot openbox bubblewrap libegl-mesa0
       - name: Policy and unit tests
         run: |
           bash scripts/check-index-clean.sh
           bash scripts/check-conventions.sh --all
+          python3 scripts/check-test-guard.py
           BORA_TEST_PYTHON=/usr/bin/python3 bash scripts/check-python-tests.sh
       - name: Report test failures
         if: failure()
@@ -42,12 +43,12 @@ jobs:
                           print('::error::' + message)
           PYTEST
       - name: Verify terminal keyboard flow on isolated display
-        run: xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo BORA_TEST_ISOLATED_X11=1 /usr/bin/python3 .claude/skills/verify-app/scenarios/17-terminal-choice.py
+        run: bash scripts/run-tests-bounded.sh xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo BORA_TEST_ISOLATED_X11=1 /usr/bin/python3 .claude/skills/verify-app/scenarios/17-terminal-choice.py
       - name: Verify study agent on isolated display
-        run: xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo BORA_TEST_ISOLATED_X11=1 /usr/bin/python3 .claude/skills/verify-app/scenarios/19-study-agent.py
+        run: bash scripts/run-tests-bounded.sh xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo BORA_TEST_ISOLATED_X11=1 /usr/bin/python3 .claude/skills/verify-app/scenarios/19-study-agent.py
       - name: Verify unified menus with a window manager
         id: menus
-        run: xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo BORA_TEST_ISOLATED_X11=1 BORA_REVIEW_SHOTS="$RUNNER_TEMP/menu-screens" /usr/bin/python3 .claude/skills/verify-app/scenarios/20-unified-menu.py 2>&1 | tee "$RUNNER_TEMP/menu-verification.log"
+        run: bash scripts/run-tests-bounded.sh xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo BORA_TEST_ISOLATED_X11=1 BORA_REVIEW_SHOTS="$RUNNER_TEMP/menu-screens" /usr/bin/python3 .claude/skills/verify-app/scenarios/20-unified-menu.py 2>&1 | tee "$RUNNER_TEMP/menu-verification.log"
       - name: Preserve menu failure evidence
         if: failure() && steps.menus.outcome == 'failure'
         uses: actions/upload-artifact@v4
