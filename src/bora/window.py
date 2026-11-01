@@ -1509,6 +1509,7 @@ class BoraWindow(Adw.ApplicationWindow):
             box.append(button)
 
         action("재생" if self._current is None or self.player.paused else "일시정지", "Space", self.toggle_pause)
+        action("네트워크 서버 열기", "", self.choose_network, media=False)
         action("정지 (처음으로)", "S", self.stop)
         action("재생 속도 느리게", ",", lambda: self._nudge_speed(-.25))
         action("재생 속도 빠르게", ".", lambda: self._nudge_speed(.25))
@@ -1940,6 +1941,17 @@ class BoraWindow(Adw.ApplicationWindow):
         self._rebuild_subtitle_menu()
         self._rebuild_audio_menu()
         return False
+
+    def choose_network(self) -> None:
+        from .network_window import NetworkWindow
+        dialog = getattr(self, '_network_window', None)
+        if dialog is None or dialog.closed:
+            def open_remote(path):
+                self.open_path(path)
+                return self._current == path
+            dialog = NetworkWindow(self, open_remote)
+            self._network_window = dialog
+        dialog.present()
 
     def choose_file(self) -> None:
         # Gtk.FileDialog 는 4.10+ 라 22.04(GTK 4.6)에 없다. Native 선택기를 쓴다(scope §2-6).

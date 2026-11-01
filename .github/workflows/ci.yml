@@ -46,6 +46,8 @@ jobs:
         run: bash scripts/run-tests-bounded.sh xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo BORA_TEST_ISOLATED_X11=1 /usr/bin/python3 .claude/skills/verify-app/scenarios/17-terminal-choice.py
       - name: Verify study agent on isolated display
         run: bash scripts/run-tests-bounded.sh xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo BORA_TEST_ISOLATED_X11=1 /usr/bin/python3 .claude/skills/verify-app/scenarios/19-study-agent.py
+      - name: Verify network browser on isolated display
+        run: bash scripts/run-tests-bounded.sh xvfb-run -a env GDK_BACKEND=x11 BORA_TEST_ISOLATED_X11=1 BORA_REVIEW_SHOTS="$RUNNER_TEMP/network-screens" /usr/bin/python3 .claude/skills/verify-app/scenarios/21-network-browser.py
       - name: Verify unified menus with a window manager
         id: menus
         run: bash scripts/run-tests-bounded.sh xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo BORA_TEST_ISOLATED_X11=1 BORA_REVIEW_SHOTS="$RUNNER_TEMP/menu-screens" /usr/bin/python3 .claude/skills/verify-app/scenarios/20-unified-menu.py 2>&1 | tee "$RUNNER_TEMP/menu-verification.log"
