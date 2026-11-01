@@ -48,7 +48,7 @@ with tempfile.TemporaryDirectory(prefix='bora-network-ui-') as directory:
     def play(path):owner.open_path(path);return owner.current_path==path
     window=NetworkWindow(owner,play,backend=Backend(),store=ServerStore(root/'config'))
     window.present();pump(.3)
-    for scheme in ('smb','sftp','nfs'):
+    for scheme in ('smb','sftp','ftp','nfs'):
         window.address.set_text(f'{scheme}://example.test/share')
         press(window.connect_button);assert window.busy and window.browser.calls[-1][0].startswith(scheme+':')
         press(window.cancel_button);assert not window.busy
@@ -62,5 +62,20 @@ with tempfile.TemporaryDirectory(prefix='bora-network-ui-') as directory:
         ImageGrab.grab(xdisplay=os.environ['DISPLAY']).save(shots/f'{name}.png')
     press(window.files.get_first_child().get_child());pump(.8)
     assert owner.current_path==video and owner.player.duration>0 and window.closed
-    owner.player.close();owner.destroy();x.XCloseDisplay(display)
-    print('network GUI: three protocol entries, real Return connect/cancel/open, two layouts and libmpv playback passed; server responses mocked')
+    from types import SimpleNamespace
+    from bora.platform.linux.network import Session
+    released=[]
+    def unmount(flags,operation,cancel,callback):
+        released.append(flags)
+        def finished():
+            callback(mount,None)
+            return False
+        GLib.idle_add(finished)
+    mount=SimpleNamespace(get_root=lambda:Gio.File.new_for_path(str(root)),
+                          unmount_with_operation=unmount,
+                          unmount_with_operation_finish=lambda result:True)
+    owner._network_session=Session();owner._network_session.take(mount)
+    owner.close();pump(.25)
+    assert released==[Gio.MountUnmountFlags.NONE] and owner._network_session.callback is None
+    owner.destroy();x.XCloseDisplay(display)
+    print('network GUI: four protocol entries, real Return connect/cancel/open, two layouts and libmpv playback passed; server responses mocked')

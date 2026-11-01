@@ -1949,7 +1949,10 @@ class BoraWindow(Adw.ApplicationWindow):
             def open_remote(path):
                 self.open_path(path)
                 return self._current == path
-            dialog = NetworkWindow(self, open_remote)
+            from .platform.network import Session
+            if getattr(self, '_network_session', None) is None:
+                self._network_session = Session()
+            dialog = NetworkWindow(self, open_remote, session=self._network_session)
             self._network_window = dialog
         dialog.present()
 
@@ -2090,4 +2093,16 @@ class BoraWindow(Adw.ApplicationWindow):
         self.state.settings.sub_pos = self.player.sub_pos
         self.state.save()
         self.player.close()
+        network_dialog = getattr(self, '_network_window', None)
+        if network_dialog is not None:
+            network_dialog.close()
+        session = getattr(self, '_network_session', None)
+        if session is not None:
+            app = self.get_application()
+            app.hold()  # 비동기 연결 정리를 마칠 때까지 애플리케이션을 유지한다.
+            def released(errors):
+                for error in errors:
+                    log.warning("%s", error)
+                app.release()
+            session.close(released)
         return False

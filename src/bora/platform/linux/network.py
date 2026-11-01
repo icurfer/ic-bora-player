@@ -6,7 +6,7 @@ from gi.repository import Gio, GLib, Gtk
 
 
 def available():
-    return any(s in Gio.Vfs.get_default().get_supported_uri_schemes() for s in ('smb', 'sftp', 'nfs'))
+    return any(s in Gio.Vfs.get_default().get_supported_uri_schemes() for s in ('smb', 'sftp', 'ftp', 'nfs'))
 
 
 def reason():
@@ -24,8 +24,71 @@ def local_path(file):
     raise ValueError('재생용 원격 경로를 열 수 없습니다. gvfs-fuse 설치 후 다시 연결하세요.')
 
 
+class Session:
+    """Bora가 새로 만든 마운트만 추적한다. 기존 공유를 인수하지 않는다."""
+    def __init__(self):
+        self.owned = {}
+        self.pending = 0
+        self.closing = False
+        self.callback = None
+        self.errors = []
+        self.cancel = Gio.Cancellable()
+        self.timeout = 0
+
+    def begin(self):
+        self.pending += 1
+
+    def end(self):
+        self.pending -= 1
+        self._complete()
+
+    def take(self, mount):
+        key = mount.get_root().get_uri()
+        if key not in self.owned:
+            self.owned[key] = mount
+            if self.closing:
+                self._release(key, mount)
+
+    def _release(self, key, mount):
+        def finished(source, result):
+            try:
+                source.unmount_with_operation_finish(result)
+            except GLib.Error:
+                self.errors.append('보라에서 만든 연결 일부를 해제하지 못했습니다. 다른 앱에서 사용 중인지 확인하세요.')
+            self.owned.pop(key, None)
+            self._complete()
+        mount.unmount_with_operation(Gio.MountUnmountFlags.NONE, None, self.cancel, finished)
+
+    def close(self, callback):
+        if self.closing:
+            return
+        self.closing = True
+        self.callback = callback
+        self.timeout = GLib.timeout_add_seconds(8, self._expired)
+        for key, mount in list(self.owned.items()):
+            self._release(key, mount)
+        self._complete()
+
+    def _expired(self):
+        self.timeout = 0
+        self.cancel.cancel()
+        if self.callback:
+            callback, self.callback = self.callback, None
+            callback(self.errors + ['네트워크 연결 해제 시간이 초과됐습니다.'])
+        return False
+
+    def _complete(self):
+        if self.closing and not self.pending and not self.owned and self.callback:
+            if self.timeout:
+                GLib.source_remove(self.timeout)
+                self.timeout = 0
+            callback, self.callback = self.callback, None
+            callback(self.errors)
+
+
 class Browser:
-    def __init__(self, parent):
+    def __init__(self, parent, session=None):
+        self.session = session or Session()
         self.parent = parent
         self.cancel = Gio.Cancellable()
         self.generation = 0
@@ -49,17 +112,40 @@ class Browser:
         operation = Gtk.MountOperation.new(self.parent)
         operation.set_password_save(Gio.PasswordSave.NEVER)
         self.operation = operation
+        if self.session.closing:
+            done(None, '플레이어를 종료하는 중입니다.')
+            return
+        self.session.begin()
         def mounted(source, result):
-            if generation != self.generation:
-                return
-            self.operation = None
+            created = False
             try:
                 source.mount_enclosing_volume_finish(result)
+                created = True
             except GLib.Error as error:
                 if not error.matches(Gio.io_error_quark(), Gio.IOErrorEnum.ALREADY_MOUNTED):
-                    done(None, '연결하지 못했습니다. 서버 주소·계정·공유 권한을 확인하세요. NFS는 서버의 내보내기 설정과 클라이언트 접근 권한도 확인하세요.')
+                    self.session.end()
+                    if generation == self.generation:
+                        self.operation = None
+                        done(None, '연결하지 못했습니다. 서버 주소·계정·공유 권한을 확인하세요. NFS는 서버의 내보내기 경로와 접근 권한도 확인하세요.')
                     return
-            self._list(file, generation, cancel, done)
+            def ready():
+                self.session.end()
+                if generation == self.generation and not self.session.closing:
+                    self.operation = None
+                    self._list(file, generation, cancel, done)
+            if not created:
+                ready()  # 운영체제나 다른 앱의 기존 연결은 소유권 목록에 넣지 않는다.
+                return
+            def found(source, result):
+                try:
+                    self.session.take(source.find_enclosing_mount_finish(result))
+                except GLib.Error:
+                    if generation == self.generation:
+                        done(None, '새 연결의 소유권을 확인하지 못했습니다. 다시 연결하세요.')
+                    self.session.end()
+                    return
+                ready()
+            file.find_enclosing_mount_async(GLib.PRIORITY_DEFAULT, None, found)
         file.mount_enclosing_volume(Gio.MountMountFlags.NONE, operation, cancel, mounted)
 
     def _list(self, file, generation, cancel, done):

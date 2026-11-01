@@ -9,7 +9,7 @@ from bora.network import Server,ServerStore,server_uri
 from bora.network_window import NetworkWindow
 
 
-@pytest.mark.parametrize('uri',['smb://nas/강의 폴더','sftp://u@nas:2222/강의','nfs://nas/export/강의','sftp://[::1]:2222/'])
+@pytest.mark.parametrize('uri',['smb://nas/강의 폴더','sftp://u@nas:2222/강의','nfs://nas/export/강의','ftp://user@nas:2121/강의','sftp://[::1]:2222/'])
 def test_uri_roundtrip(uri):
     canonical=server_uri(uri)
     assert server_uri(canonical)==canonical and ' ' not in canonical
@@ -73,7 +73,7 @@ def window(tmp_path):
     w.close();w.destroy();parent.destroy()
 
 
-@pytest.mark.parametrize('scheme',['smb','sftp','nfs'])
+@pytest.mark.parametrize('scheme',['smb','sftp','ftp','nfs'])
 def test_cancel_ignores_late_result(window,scheme):
     w=window;w.address.set_text(f'{scheme}://host/share');w.connect_button.emit('clicked')
     assert w.busy
@@ -100,3 +100,55 @@ def test_save_and_delete_without_password(window):
     w.address.set_text('nfs://host/export');w.name.set_text('NAS');w.save_server()
     assert w.store.load()[0].uri=='nfs://host/export'
     w.remove_server(w.saved[0]);assert w.store.load()==[]
+
+
+@pytest.mark.parametrize('created',[False,True])
+def test_only_bora_created_mounts_disconnect(created,tmp_path,monkeypatch):
+    from bora.platform.linux import network
+    events=[]
+    class Mount:
+        def get_root(self):return Gio.File.new_for_path(str(tmp_path))
+        def unmount_with_operation(self,flags,operation,cancel,callback):
+            events.append(flags)
+            callback(self,None)
+        def unmount_with_operation_finish(self,result):return True
+    mount=Mount()
+    class File:
+        def get_uri_scheme(self):return 'smb'
+        def mount_enclosing_volume(self,flags,op,cancel,callback):callback(self,None)
+        def mount_enclosing_volume_finish(self,result):
+            if not created:
+                raise GLib.Error.new_literal(Gio.io_error_quark(),'borrowed',Gio.IOErrorEnum.ALREADY_MOUNTED)
+            return True
+        def find_enclosing_mount_async(self,priority,cancel,callback):callback(self,None)
+        def find_enclosing_mount_finish(self,result):return mount
+    session=network.Session();browser=network.Browser(None,session)
+    monkeypatch.setattr(network.Gio.Vfs,'get_default',lambda:SimpleNamespace(get_supported_uri_schemes=lambda:['smb']))
+    monkeypatch.setattr(network.Gtk.MountOperation,'new',lambda _:Gio.MountOperation())
+    original=network.Gio.File.new_for_uri
+    monkeypatch.setattr(network.Gio.File,'new_for_uri',lambda _:File())
+    monkeypatch.setattr(browser,'_list',lambda *args:None)
+    browser.browse('smb://host/share',lambda *args:None)
+    # 탐색창 닫기는 연결을 끊지 않으며 플레이어의 세션 종료가 해제한다.
+    browser.stop()
+    assert events==[]
+    completed=[]
+    store=ServerStore(tmp_path);store.save([Server('NAS','smb://host/share')]);before=store.path.read_bytes()
+    session.close(lambda errors:completed.append(errors))
+    assert completed==[[]]
+    assert len(events)==int(created)
+    if events:assert events[0]==Gio.MountUnmountFlags.NONE
+    assert store.path.read_bytes()==before
+
+
+def test_shutdown_waits_for_connection_already_in_flight(tmp_path):
+    from bora.platform.linux.network import Session
+    session=Session();session.begin();done=[];calls=[]
+    mount=SimpleNamespace(get_root=lambda:Gio.File.new_for_path(str(tmp_path)),
+         unmount_with_operation=lambda flags,op,cancel,callback:calls.append(callback),
+         unmount_with_operation_finish=lambda result:True)
+    session.close(lambda errors:done.append(errors))
+    assert done==[]
+    session.take(mount);session.end();assert done==[]
+    calls[0](mount,None)
+    assert done==[[]]

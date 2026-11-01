@@ -6,7 +6,7 @@ from pathlib import Path
 import tempfile
 from urllib.parse import urlsplit, urlunsplit, quote, unquote
 
-PROTOCOLS = ('smb', 'sftp', 'nfs')
+PROTOCOLS = ('smb', 'sftp', 'ftp', 'nfs')
 
 
 def server_uri(value):
@@ -29,7 +29,7 @@ def server_uri(value):
             raise ValueError
         return urlunsplit((parsed.scheme, parsed.netloc, quote(path or '/', safe='/'), '', ''))
     except ValueError:
-        raise ValueError('smb://서버/공유, sftp://사용자@서버:포트/폴더 또는 nfs://서버/내보낸경로 형식으로 입력하세요. 비밀번호는 주소에 넣지 마세요.') from None
+        raise ValueError('smb://서버/공유, sftp://사용자@서버:포트/폴더 ftp://사용자@서버/폴더 또는 nfs://서버/내보낸경로 형식으로 입력하세요. 비밀번호는 주소에 넣지 마세요.') from None
 
 
 @dataclass(frozen=True)

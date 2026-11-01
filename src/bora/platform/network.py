@@ -2,7 +2,7 @@
 from . import IS_LINUX
 
 if IS_LINUX:
-    from .linux.network import Browser, available, local_path, reason
+    from .linux.network import Browser, Session, available, local_path, reason
 else:
     def available():
         return False
@@ -14,7 +14,7 @@ else:
         raise ValueError(reason())
 
     class Browser:
-        def __init__(self, parent):
+        def __init__(self, parent, session=None):
             pass
 
         def stop(self):
@@ -22,3 +22,8 @@ else:
 
         def browse(self, uri, done):
             done(None, reason())
+
+if not IS_LINUX:
+    class Session:
+        def close(self, callback):
+            callback([])

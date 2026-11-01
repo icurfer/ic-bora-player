@@ -7,7 +7,7 @@ from .platform import paths, network
 
 
 class NetworkWindow(Gtk.Window):
-    def __init__(self, parent, open_file, *, backend=None, store=None):
+    def __init__(self, parent, open_file, *, backend=None, store=None, session=None):
         super().__init__(title='네트워크 서버 열기', transient_for=parent,
                          default_width=640, default_height=620, destroy_with_parent=True)
         header = Gtk.HeaderBar()
@@ -15,7 +15,7 @@ class NetworkWindow(Gtk.Window):
         self.set_titlebar(header)
         self.open_file = open_file
         self.store = store or ServerStore(paths.config_dir())
-        self.browser = backend or network.Browser(self)
+        self.browser = backend or network.Browser(self, session=session)
         self.current = None
         self.closed = False
         self.busy = False
@@ -25,10 +25,10 @@ class NetworkWindow(Gtk.Window):
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10,
                        margin_top=16, margin_bottom=16, margin_start=16, margin_end=16)
         self.set_child(root)
-        root.append(Gtk.Label(label='SMB · SFTP · NFS 서버에서 영상 열기', xalign=0, css_classes=['title-3']))
+        root.append(Gtk.Label(label='SMB · SFTP · FTP · NFS 서버에서 영상 열기', xalign=0, css_classes=['title-3']))
         self.name = Gtk.Entry(placeholder_text='서버 이름 (선택)')
         self.name.set_tooltip_text('즐겨찾기에 표시할 서버 이름')
-        self.address = Gtk.Entry(placeholder_text='smb://서버/공유 · sftp://사용자@서버:포트/폴더 · nfs://서버/경로')
+        self.address = Gtk.Entry(placeholder_text='smb://서버/공유 · sftp://사용자@서버:포트/폴더 · ftp://서버/폴더 · nfs://서버/경로')
         self.address.set_tooltip_text('서버 주소 · 비밀번호는 연결할 때 입력합니다')
         self.address.connect('activate', lambda *_: self.connect_server())
         root.append(self.name)
