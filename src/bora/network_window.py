@@ -50,7 +50,7 @@ class NetworkWindow(Gtk.Window):
         root.append(saved_scroll)
         try:
             self.saved = self.store.load()
-            initial = '비밀번호는 서버 목록에 저장하지 않습니다. NFS는 서버의 내보내기 경로를 입력하세요.'
+            initial = '비밀번호는 서버 목록에 저장하지 않습니다. NFS는 시스템 관리자 인증으로 읽기 전용 연결합니다.'
         except ValueError as error:
             self.saved = []
             initial = str(error)
@@ -72,8 +72,10 @@ class NetworkWindow(Gtk.Window):
         scroll = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
         scroll.set_child(self.files)
         root.append(scroll)
-        root.append(Gtk.Label(label='메모·편집한 자막은 영상과 같은 서버 폴더에 저장됩니다.\n대화 기록은 이 컴퓨터에 저장됩니다. 읽기 전용 서버에서는 메모를 저장할 수 없습니다.',
-                              xalign=0, wrap=True, css_classes=['dim-label']))
+        self.storage_notice = Gtk.Label(label='메모·편집한 자막은 영상과 같은 서버 폴더에 저장됩니다.\n대화 기록은 이 컴퓨터에 저장됩니다. 읽기 전용 서버에서는 메모를 저장할 수 없습니다.',
+                                        xalign=0, wrap=True, css_classes=['dim-label'])
+        self.storage_default = self.storage_notice.get_text()
+        root.append(self.storage_notice)
         if backend is None and not network.available():
             self.status.set_text(network.reason())
             self.connect_button.set_sensitive(False)
@@ -135,7 +137,8 @@ class NetworkWindow(Gtk.Window):
         self.connect_button.set_sensitive(not busy)
         self.cancel_button.set_sensitive(busy)
         self.files.set_sensitive(not busy)
-        self.up.set_sensitive(not busy and self.current is not None and self.current.get_parent() is not None)
+        self.up.set_sensitive(not busy and self.current is not None and self.current.get_parent() is not None
+                              and (not hasattr(self.browser, 'can_go_up') or self.browser.can_go_up(self.current)))
         self.refresh.set_sensitive(not busy and self.current is not None)
 
     def _browse(self, file):
@@ -144,7 +147,8 @@ class NetworkWindow(Gtk.Window):
         self.generation += 1
         generation = self.generation
         self._set_busy(True)
-        self.status.set_text('서버에 연결하고 폴더를 읽고 있습니다…')
+        self.status.set_text('이 컴퓨터의 관리자 인증 후 읽기 전용 NFS 연결을 준비합니다…'
+                             if file.has_uri_scheme('nfs') else '서버에 연결하고 폴더를 읽고 있습니다…')
         def done(result, message):
             if self.closed or generation != self.generation:
                 return
@@ -153,7 +157,12 @@ class NetworkWindow(Gtk.Window):
                 self.status.set_text(message)
                 return
             self.current, entries = result
-            self.location.set_text(self.current.get_parse_name())
+            self.location.set_text(self.browser.display_location(self.current)
+                                   if hasattr(self.browser, 'display_location') else self.current.get_parse_name())
+            if hasattr(self.browser, 'read_only') and self.browser.read_only(self.current):
+                self.storage_notice.set_text('읽기 전용 NFS 연결 · 메모와 편집한 자막을 서버에 저장할 수 없습니다.\n서버 등록 정보는 종료 후에도 유지됩니다.')
+            else:
+                self.storage_notice.set_text(self.storage_default)
             self._set_busy(False)
             while self.files.get_first_child():
                 self.files.remove(self.files.get_first_child())

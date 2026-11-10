@@ -93,11 +93,16 @@ class Browser:
         self.cancel = Gio.Cancellable()
         self.generation = 0
         self.operation = None
+        self.nfs_request = None
 
     def stop(self):
         self.generation += 1
         self.cancel.cancel()
         self.cancel = Gio.Cancellable()
+        if self.nfs_request is not None:
+            from . import nfs_client
+            nfs_client.cancel_request(self.nfs_request)
+            self.nfs_request = None
         if self.operation is not None:
             self.operation.emit('aborted')
             self.operation = None
@@ -106,6 +111,35 @@ class Browser:
         self.stop()
         generation, cancel = self.generation, self.cancel
         file = Gio.File.new_for_uri(uri)
+        if self.session.closing:
+            done(None, '플레이어를 종료하는 중입니다.')
+            return
+        if file.get_uri_scheme() == 'nfs':
+            from . import nfs_client
+            for mount in self.session.owned.values():
+                if getattr(mount, 'uri', None) == uri:
+                    self._list(mount.get_root(), generation, cancel, done)
+                    return
+            self.session.begin()
+            def connected(mount, error):
+                if mount is not None:
+                    self.session.take(mount)
+                self.session.end()
+                if generation == self.generation and not self.session.closing:
+                    self.nfs_request = None
+                    if mount is None:
+                        done(None, error)
+                    else:
+                        self._list(mount.get_root(), generation, cancel, done)
+            self.nfs_request = nfs_client.connect(uri, connected)
+            return
+        if file.get_uri_scheme() == 'file':
+            if not any(file.equal(m.get_root()) or file.has_prefix(m.get_root())
+                       for m in self.session.owned.values() if hasattr(m, 'token')):
+                done(None, '보라가 연결한 NFS 폴더 안에서만 탐색할 수 있습니다.')
+                return
+            self._list(file, generation, cancel, done)
+            return
         if file.get_uri_scheme() not in Gio.Vfs.get_default().get_supported_uri_schemes():
             done(None, reason())
             return
@@ -147,6 +181,25 @@ class Browser:
                 ready()
             file.find_enclosing_mount_async(GLib.PRIORITY_DEFAULT, None, found)
         file.mount_enclosing_volume(Gio.MountMountFlags.NONE, operation, cancel, mounted)
+
+    def read_only(self, file):
+        return any((file.equal(m.get_root()) or file.has_prefix(m.get_root()))
+                   for m in self.session.owned.values() if hasattr(m, 'token'))
+
+    def display_location(self, file):
+        from urllib.parse import quote
+        for mount in self.session.owned.values():
+            if hasattr(mount, 'token'):
+                relative = mount.get_root().get_relative_path(file)
+                if relative is not None:
+                    return mount.uri.rstrip('/') + ('/' + quote(relative, safe='/') if relative else '')
+        return file.get_parse_name()
+
+    def can_go_up(self, file):
+        if file.get_uri_scheme() == 'file':
+            return any(file.has_prefix(m.get_root()) and not file.equal(m.get_root())
+                       for m in self.session.owned.values() if hasattr(m, 'token'))
+        return file.get_parent() is not None
 
     def _list(self, file, generation, cancel, done):
         entries = []

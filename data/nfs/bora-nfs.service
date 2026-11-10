@@ -1,0 +1,22 @@
+[Unit]
+Description=Bora restricted read-only NFS connection broker
+After=dbus.service network.target
+
+[Service]
+Type=dbus
+BusName=com.icurfer.Bora.NFS
+ExecStart=/usr/lib/bora/nfs-service
+User=root
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_NET_BIND_SERVICE
+# RestrictSUIDSGID는 간접 mode 인자를 가진 openat2를 ENOSYS로 막는다.
+# 공유 경로 격리에 openat2를 사용하며 읽기 전용·nosuid·NoNewPrivileges를 적용한다.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+MemoryMax=256M
+MemorySwapMax=0
+TasksMax=32
+TimeoutStopSec=45
+KillMode=control-group
+# 마운트를 일반 사용자에게 전달해야 하므로 별도 mount namespace는 만들지 않는다.
+PrivateMounts=no

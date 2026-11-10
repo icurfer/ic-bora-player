@@ -55,6 +55,15 @@ sys.exit(main())
 EOF
 chmod 755 "$ROOT/usr/bin/bora"
 
+# NFS 권한 서비스는 사용자 Python 경로를 읽지 않는 root 소유 복사본으로 설치한다.
+install -Dm755 data/nfs/nfs-service "$ROOT/usr/lib/bora/nfs-service"
+install -Dm644 src/bora/platform/linux/nfs_service.py "$ROOT/usr/lib/bora/nfs_service.py"
+install -Dm644 src/bora/platform/linux/nfs_view.py "$ROOT/usr/lib/bora/nfs_view.py"
+install -Dm644 data/nfs/com.icurfer.Bora.NFS.service "$ROOT/usr/share/dbus-1/system-services/com.icurfer.Bora.NFS.service"
+install -Dm644 data/nfs/com.icurfer.Bora.NFS.conf "$ROOT/usr/share/dbus-1/system.d/com.icurfer.Bora.NFS.conf"
+install -Dm644 data/nfs/com.icurfer.Bora.nfs.policy "$ROOT/usr/share/polkit-1/actions/com.icurfer.Bora.nfs.policy"
+install -Dm644 data/nfs/bora-nfs.service "$ROOT/usr/lib/systemd/system/bora-nfs.service"
+
 install -m 644 README.md "$ROOT/usr/share/doc/$PKG/"
 install -m 644 CHANGELOG.md "$ROOT/usr/share/doc/$PKG/"
 install -m 644 scripts/install-stt.sh "$ROOT/usr/share/doc/$PKG/"
@@ -69,7 +78,7 @@ Priority: optional
 Architecture: all
 Maintainer: icurfer <noreply@icurfer.com>
 Installed-Size: $INSTALLED_KB
-Depends: python3 (>= 3.10), python3-gi, python3-gi-cairo, gir1.2-gtk-4.0, gir1.2-adw-1, gir1.2-secret-1, gnome-keyring, python3-mpv, ffmpeg, gvfs-backends, gvfs-fuse
+Depends: python3 (>= 3.10), python3-gi, python3-gi-cairo, gir1.2-gtk-4.0, gir1.2-adw-1, gir1.2-secret-1, gnome-keyring, python3-mpv, ffmpeg, gvfs-backends, gvfs-fuse, nfs-common, python3-pyfuse3, polkitd | policykit-1, dbus
 Recommends: ffmpeg, fonts-noto-cjk, gnome-terminal
 Suggests: python3-venv
 Description: 국내 자막을 제대로 다루는 리눅스 미디어 플레이어
@@ -87,6 +96,9 @@ EOF
 cat > "$ROOT/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
 set -e
+if [ -d /run/systemd/system ]; then
+  systemctl daemon-reload
+fi
 if [ "$1" = "configure" ]; then
     update-desktop-database -q /usr/share/applications 2>/dev/null || true
     gtk-update-icon-cache -q -f /usr/share/icons/hicolor 2>/dev/null || true
@@ -94,10 +106,20 @@ fi
 EOF
 chmod 755 "$ROOT/DEBIAN/postinst"
 
+cat > "$ROOT/DEBIAN/prerm" <<'EOF'
+#!/bin/sh
+set -e
+if [ "$1" = remove ] && [ -d /run/systemd/system ]; then
+    systemctl stop bora-nfs.service
+fi
+EOF
+chmod 755 "$ROOT/DEBIAN/prerm"
+
 cat > "$ROOT/DEBIAN/postrm" <<'EOF'
 #!/bin/sh
 set -e
 if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
+    if [ -d /run/systemd/system ]; then systemctl daemon-reload; fi
     update-desktop-database -q /usr/share/applications 2>/dev/null || true
     gtk-update-icon-cache -q -f /usr/share/icons/hicolor 2>/dev/null || true
 fi

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN" "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>Bora</vendor>
+  <action id="com.icurfer.Bora.nfs-connect">
+    <description>Connect a read-only NFS share for Bora</description>
+    <description xml:lang="ko">보라 전용 읽기 전용 NFS 연결</description>
+    <message>Administrator authentication is required to connect a read-only NFS share for Bora.</message>
+    <message xml:lang="ko">보라에서 읽기 전용 NFS 공유를 연결하려면 이 컴퓨터의 관리자 인증이 필요합니다.</message>
+    <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>auth_admin</allow_active></defaults>
+  </action>
+</policyconfig>

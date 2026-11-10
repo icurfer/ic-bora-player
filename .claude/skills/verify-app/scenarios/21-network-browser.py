@@ -45,15 +45,21 @@ with tempfile.TemporaryDirectory(prefix='bora-network-ui-') as directory:
         def __init__(self):self.calls=[]
         def browse(self,uri,done):self.calls.append((uri,done))
         def stop(self):pass
+        def read_only(self,file):return True
+        def display_location(self,file):return 'nfs://example.test/share'
+        def can_go_up(self,file):return False
     def play(path):owner.open_path(path);return owner.current_path==path
     window=NetworkWindow(owner,play,backend=Backend(),store=ServerStore(root/'config'))
     window.present();pump(.3)
     for scheme in ('smb','sftp','ftp','nfs'):
         window.address.set_text(f'{scheme}://example.test/share')
         press(window.connect_button);assert window.busy and window.browser.calls[-1][0].startswith(scheme+':')
+        if scheme=='nfs':assert '관리자 인증' in window.status.get_text()
         press(window.cancel_button);assert not window.busy
     press(window.connect_button)
     window.browser.calls[-1][1]((Gio.File.new_for_path(str(root)),[(video.name,video.name,False)]),'');pump()
+    assert '읽기 전용 NFS' in window.storage_notice.get_text() and not window.up.get_sensitive()
+    assert window.location.get_text()=='nfs://example.test/share'
     shots=Path(os.environ.get('BORA_REVIEW_SHOTS','/data/github-icurfer/.bora-worktrees/network-shots'))
     shots.mkdir(parents=True,exist_ok=True)
     for width,height,name in ((640,620,'normal'),(480,580,'narrow')):
