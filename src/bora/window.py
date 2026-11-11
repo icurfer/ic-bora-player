@@ -2057,12 +2057,12 @@ class BoraWindow(Adw.ApplicationWindow):
         if self._clip_window is not None and self._clip_window.runner.running:
             self.toast("내보내기를 끝내거나 취소한 뒤 종료해라")
             return True
-        if not self._notes.prepare_leave():
+        if not self._notes.prepare_close():
             self.toggle_notes(True)
             return True
         if not self._confirm_discard_edit("종료하려면", "close-window"):
             return True
-        if not self._chat.prepare_leave():
+        if not self._chat.prepare_close():
             self._study.set_visible(True)
             return True
         self._media_generation += 1
@@ -2079,19 +2079,21 @@ class BoraWindow(Adw.ApplicationWindow):
         self._timeline.unload()       # 프레임 콜백·썸네일 작업도 정리한다
         if self._stt is not None:
             self._stt.cancel()
-        self._notes.save()
         if self._editor is not None:
             self._editor.close()
         if self._clip_window is not None:
             self._clip_window.close()
-        self._remember_position()
-        self.state.settings.speed = self.player.speed
-        self.state.settings.volume = self.player.volume
-        self.state.settings.sub_font_size = self.player.sub_font_size
-        self.state.settings.sub_font = self.player.sub_font
-        self.state.settings.sub_color = self.player.sub_color
-        self.state.settings.sub_pos = self.player.sub_pos
-        self.state.save()
+        try:
+            self._remember_position()
+            self.state.settings.speed = self.player.speed
+            self.state.settings.volume = self.player.volume
+            self.state.settings.sub_font_size = self.player.sub_font_size
+            self.state.settings.sub_font = self.player.sub_font
+            self.state.settings.sub_color = self.player.sub_color
+            self.state.settings.sub_pos = self.player.sub_pos
+            self.state.save()
+        except OSError as exc:
+            log.warning('종료 중 설정 저장 실패: %s', exc)
         self.player.close()
         network_dialog = getattr(self, '_network_window', None)
         if network_dialog is not None:

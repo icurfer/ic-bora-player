@@ -96,12 +96,19 @@ class NoteDocument:
     # ── 경로 ─────────────────────────────────────────────────────────────
     @staticmethod
     def path_for(video: Path) -> Path:
+        from ..network import remote_uri
+        uri = remote_uri(video)
+        if uri and uri.startswith('nfs://'):
+            from ..platform import paths
+            import hashlib
+            key = hashlib.sha256(uri.encode('utf-8')).hexdigest()
+            return paths.data_dir() / 'network-notes' / key / (Path(video).stem + '.md')
         return Path(video).with_suffix(NoteDocument.SUFFIX)
 
     @staticmethod
     def assets_dir_for(video: Path) -> Path:
         """스크린샷 같은 첨부를 두는 곳. 메모와 같은 이름의 폴더."""
-        return Path(video).with_suffix(".assets")
+        return NoteDocument.path_for(video).with_suffix(".assets")
 
     # ── 입출력 ───────────────────────────────────────────────────────────
     @classmethod
@@ -116,6 +123,12 @@ class NoteDocument:
             except OSError as exc:
                 log.warning("메모를 읽지 못했다 %s: %s", path, exc)
                 raise
+        sidecar = Path(video).with_suffix(cls.SUFFIX)
+        if path != sidecar and sidecar.is_file():
+            # 읽기 전용 원격 원본은 유지하고 기존 본문을 로컬 메모로 이어 쓴다.
+            doc = cls(path, sidecar.read_text(encoding='utf-8'))
+            doc.saved_text = ''
+            return doc
         # 처음 여는 영상이면 제목 한 줄로 시작한다. 빈 화면보다 쓰기 시작하기 쉽다.
         heading = f"# {title or Path(video).stem}\n\n"
         return cls(path, heading)
@@ -141,11 +154,14 @@ class NoteDocument:
             body += "\n"            # 평문 파일의 예의
         tmp = self.path.with_suffix(self.path.suffix + ".tmp")
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             tmp.write_text(body, encoding="utf-8")
             tmp.replace(self.path)
         except OSError:
-            tmp.unlink(missing_ok=True)
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass  # 임시 파일 정리 실패가 원래 저장 오류를 가리지 않게 한다.
             raise
         self.saved_text = self.text
         self._disk_text = body

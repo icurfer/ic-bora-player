@@ -14,13 +14,18 @@ def reason():
 
 
 def local_path(file):
+    from ...network import remember_remote, PROTOCOLS
+    def remembered(path):
+        if getattr(file, 'get_uri_scheme', lambda: None)() in PROTOCOLS:
+            remember_remote(path, file.get_uri())
+        return Path(path)
     path = file.get_path()
     if path:
-        return Path(path)
+        return remembered(path)
     root = file.find_enclosing_mount(None).get_default_location()
     base, relative = root.get_path(), root.get_relative_path(file)
     if base and relative is not None:
-        return Path(base) / relative
+        return remembered(Path(base) / relative)
     raise ValueError('재생용 원격 경로를 열 수 없습니다. gvfs-fuse 설치 후 다시 연결하세요.')
 
 
@@ -34,6 +39,8 @@ class Session:
         self.errors = []
         self.cancel = Gio.Cancellable()
         self.timeout = 0
+        self.last_location = None
+        self.last_server = None
 
     def begin(self):
         self.pending += 1
@@ -44,6 +51,9 @@ class Session:
 
     def take(self, mount):
         key = mount.get_root().get_uri()
+        if getattr(mount, 'uri', None):
+            from ...network import remember_remote
+            remember_remote(mount.get_root().get_path(), mount.uri, root=True)
         if key not in self.owned:
             self.owned[key] = mount
             if self.closing:

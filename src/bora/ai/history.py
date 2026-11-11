@@ -10,7 +10,8 @@ from ..platform import paths
 
 class Conversation:
     def __init__(self, video, directory=None):
-        identity = str(Path(video).resolve())
+        from ..network import media_identity
+        identity = media_identity(video)
         self.path = (Path(directory) if directory else paths.data_dir() / 'conversations') / (
             hashlib.sha256(identity.encode()).hexdigest() + '.json')
         self.messages = []

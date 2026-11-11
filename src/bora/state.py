@@ -69,7 +69,8 @@ def config_dir() -> Path:
 
 def _key(path: Path) -> str:
     """파일을 가리키는 안정된 열쇠. 경로가 길거나 특수문자여도 안전하다."""
-    return hashlib.sha1(str(Path(path).resolve()).encode("utf-8")).hexdigest()[:16]
+    from .network import media_identity
+    return hashlib.sha1(media_identity(path).encode("utf-8")).hexdigest()[:16]
 
 
 @dataclass

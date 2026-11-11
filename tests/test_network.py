@@ -80,6 +80,7 @@ def test_cancel_ignores_late_result(window,scheme):
     callback=w.browser.calls[-1][1];w.cancel_button.emit('clicked')
     callback((Gio.File.new_for_uri(f'{scheme}://host/share'),[('late','late',False)]),'')
     assert w.current is None and w.files.get_first_child() is None and not w.busy
+    assert not w.store.path.exists()
 
 
 def test_retry_navigation_and_playback_dispatch(window,tmp_path,monkeypatch):

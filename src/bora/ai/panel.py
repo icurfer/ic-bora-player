@@ -257,6 +257,24 @@ class ChatPanel(Gtk.Box):
             self._study_preview.close()
         return True
 
+    def prepare_close(self):
+        self.cancel()
+        if self._save():
+            if not self.record_notes():
+                # 대화 원문은 로컬 JSON에 보관했다. 메모에 옮기는 실패는 종료를 막지 않는다.
+                self.window.toast('대화 기록은 저장했지만 메모 자동 기록은 완료하지 못했습니다.')
+            return True
+        from types import SimpleNamespace
+        import json
+        from ..notes.recovery import prepare_close
+        if not hasattr(self, '_close_recovery'):
+            self._close_recovery = SimpleNamespace(window=self.window,
+                recovery_title='대화 기록을 저장하지 못했습니다',
+                _text=lambda: json.dumps(self.doc.messages, ensure_ascii=False, indent=2),
+                prepare_leave=self._save, _cancel_autosave=self.cancel)
+        self._close_recovery.doc = self.doc
+        return prepare_close(self._close_recovery)
+
     def record_notes(self):
         if self.doc is None or not self.doc.messages:
             return True

@@ -7,6 +7,32 @@ import tempfile
 from urllib.parse import urlsplit, urlunsplit, quote, unquote
 
 PROTOCOLS = ('smb', 'sftp', 'ftp', 'nfs')
+_remote_roots = {}
+_remote_files = {}
+
+
+def remember_remote(path, uri, *, root=False):
+    """프로세스 안에서만 임시 파일 경로를 비밀번호 없는 원격 주소에 대응시킨다."""
+    uri = server_uri(uri)
+    (_remote_roots if root else _remote_files)[Path(path).resolve()] = uri
+
+
+def remote_uri(path):
+    path = Path(path).resolve()
+    if path in _remote_files:
+        return _remote_files[path]
+    for root in sorted(_remote_roots, key=lambda p: len(p.parts), reverse=True):
+        try:
+            relative = path.relative_to(root)
+        except ValueError:
+            continue
+        return _remote_roots[root].rstrip('/') + ('/' + quote(relative.as_posix(), safe='/')
+                                                 if relative.parts else '')
+    return None
+
+
+def media_identity(path):
+    return remote_uri(path) or str(Path(path).resolve())
 
 
 def server_uri(value):

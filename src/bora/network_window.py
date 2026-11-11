@@ -1,7 +1,7 @@
 """서버 즐겨찾기와 비동기 원격 파일 탐색 UI."""
 import gi
 gi.require_version('Gtk', '4.0')
-from gi.repository import Gio, Gtk
+from gi.repository import Gio, Gtk, GLib
 from .network import Server, ServerStore, server_uri
 from .platform import paths, network
 
@@ -16,6 +16,7 @@ class NetworkWindow(Gtk.Window):
         self.open_file = open_file
         self.store = store or ServerStore(paths.config_dir())
         self.browser = backend or network.Browser(self, session=session)
+        self.session = session
         self.current = None
         self.closed = False
         self.busy = False
@@ -50,9 +51,11 @@ class NetworkWindow(Gtk.Window):
         root.append(saved_scroll)
         try:
             self.saved = self.store.load()
+            self.can_save_servers = True
             initial = '비밀번호는 서버 목록에 저장하지 않습니다. NFS는 시스템 관리자 인증으로 읽기 전용 연결합니다.'
         except ValueError as error:
             self.saved = []
+            self.can_save_servers = False
             initial = str(error)
             save.set_sensitive(False)
         self._saved_rows()
@@ -79,6 +82,14 @@ class NetworkWindow(Gtk.Window):
         if backend is None and not network.available():
             self.status.set_text(network.reason())
             self.connect_button.set_sensitive(False)
+        if session is not None and getattr(session, 'last_location', None) is not None:
+            if session.last_server:
+                self.name.set_text(session.last_server.name)
+                self.address.set_text(session.last_server.uri)
+            def restore():
+                self._browse(session.last_location)
+                return False
+            GLib.timeout_add(1, restore)
 
     def _saved_rows(self):
         while self.servers.get_first_child():
@@ -130,7 +141,7 @@ class NetworkWindow(Gtk.Window):
         except ValueError as error:
             self.status.set_text(str(error))
             return
-        self._browse(file)
+        self._browse(file, remember=True)
 
     def _set_busy(self, busy):
         self.busy = busy
@@ -141,7 +152,7 @@ class NetworkWindow(Gtk.Window):
                               and (not hasattr(self.browser, 'can_go_up') or self.browser.can_go_up(self.current)))
         self.refresh.set_sensitive(not busy and self.current is not None)
 
-    def _browse(self, file):
+    def _browse(self, file, remember=False):
         if file is None or self.closed:
             return
         self.generation += 1
@@ -157,10 +168,23 @@ class NetworkWindow(Gtk.Window):
                 self.status.set_text(message)
                 return
             self.current, entries = result
+            if self.session is not None:
+                self.session.last_location = self.current
+            if remember:
+                server = Server(self.name.get_text().strip() or file.get_parse_name(), file.get_uri())
+                if self.session is not None:
+                    self.session.last_server = server
+                if self.can_save_servers and not any(s.uri == server.uri for s in self.saved):
+                    try:
+                        self.store.save(self.saved + [server])
+                        self.saved.append(server)
+                        self._saved_rows()
+                    except (OSError, ValueError):
+                        message = (message + '\n' if message else '') + '연결했지만 서버 정보를 저장하지 못했습니다. 저장 권한을 확인하세요.'
             self.location.set_text(self.browser.display_location(self.current)
                                    if hasattr(self.browser, 'display_location') else self.current.get_parse_name())
             if hasattr(self.browser, 'read_only') and self.browser.read_only(self.current):
-                self.storage_notice.set_text('읽기 전용 NFS 연결 · 메모와 편집한 자막을 서버에 저장할 수 없습니다.\n서버 등록 정보는 종료 후에도 유지됩니다.')
+                self.storage_notice.set_text('읽기 전용 NFS 연결 · 메모와 핀 이미지는 이 컴퓨터에 저장합니다.\n서버 등록 정보는 종료 후에도 유지됩니다.')
             else:
                 self.storage_notice.set_text(self.storage_default)
             self._set_busy(False)

@@ -267,6 +267,10 @@ class NotePanel(Gtk.Box):
             return False
         return True
 
+    def prepare_close(self) -> bool:
+        from .recovery import prepare_close
+        return prepare_close(self)
+
     def cancel_ask(self) -> None:
         self._ask_generation += 1
         if self._ask is not None:
@@ -693,6 +697,7 @@ class NotePanel(Gtk.Box):
             self._status.set_label("")
             return
         self._status.set_label(f"{self.doc.path.name} · {note}")
+        self._status.set_tooltip_text(str(self.doc.path))
 
     def focus_editor(self) -> None:
         self._view.grab_focus()
