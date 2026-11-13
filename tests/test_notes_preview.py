@@ -150,3 +150,66 @@ def test_chat_record_marker_is_hidden_but_saved(panel):
     prepare(panel, source, cursor_line=2)
     assert 'hidden' in tags_at(panel, source.index(marker))
     assert panel._text() == source
+
+
+@pytest.fixture
+def pointer_panel(panel):
+    """실제 GTK 레이아웃에서 숨긴 한글 마크다운의 링크 위치를 확인한다."""
+    import time
+    from gi.repository import GLib
+    view = Gtk.TextView(buffer=panel._buffer, wrap_mode=Gtk.WrapMode.WORD_CHAR)
+    panel._view = view
+    window = Gtk.Window(default_width=180, default_height=300)
+    window.set_child(Gtk.ScrolledWindow(child=view))
+    window.present()
+    def pump():
+        end = time.monotonic() + .06
+        while time.monotonic() < end:
+            context = GLib.MainContext.default()
+            while context.pending() and time.monotonic() < end:
+                context.iteration(False)
+            time.sleep(.002)
+    panel._pointer_pump = pump
+    pump()
+    yield panel
+    window.destroy()
+    pump()
+
+
+def test_timestamp_hit_avoids_crashing_visible_byte_conversion(pointer_panel, monkeypatch):
+    panel = pointer_panel
+    from bora.notes.model import parse_stamps
+    raw = '# **긴 한글 제목과 [00:00:13] 복습**\n\n끝\n'
+    prepare(panel, raw, cursor_line=3)
+    panel._pointer_pump()
+    def unsafe(*_):
+        raise AssertionError('실제 충돌 스택의 get_iter_at_location 경로를 다시 호출했습니다')
+    monkeypatch.setattr(panel._view, 'get_iter_at_location', unsafe)
+    stamp = parse_stamps(raw)[0]
+    painted = 0
+    for offset in range(stamp.start, stamp.end):
+        rect = panel._view.get_iter_location(panel._buffer.get_iter_at_offset(offset))
+        if rect.width <= 0:  # 글리프 묶음의 면적 없는 위치는 클릭 대상이 아니다.
+            continue
+        painted += 1
+        x, y = panel._view.buffer_to_window_coords(Gtk.TextWindowType.WIDGET,
+                                                   rect.x + max(0, rect.width // 2), rect.y + rect.height // 2)
+        hit = panel._stamp_at(x, y)
+        assert hit is not None and hit.seconds == 13, (offset, raw[offset], rect.x, rect.y, rect.width, rect.height, panel._view.get_line_at_y(rect.y + rect.height // 2)[0].get_offset())
+    assert painted > 0
+    assert panel._stamp_at(500, -20) is None
+    assert panel._text() == raw
+
+
+def test_pointer_after_repeated_unicode_edits_preserves_text(pointer_panel):
+    panel = pointer_panel
+    for index in range(24):
+        text = ('## **한글 기록 [00:00:13]**\n' + '아주 긴 한글 메모 ' * (index % 5) + '\n'
+                + '<!-- bora-chat:' + 'a' * 64 + ' -->\n')
+        prepare(panel, text, cursor_line=4)
+        if index % 2:
+            panel._pointer_pump()
+        for y in (0, 12, 32, 70, 120):
+            for x in (2, 40, 120, 300):
+                panel._stamp_at(x, y)
+        assert panel._text() == text

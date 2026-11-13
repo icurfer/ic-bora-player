@@ -661,13 +661,22 @@ class NotePanel(Gtk.Box):
 
     def _stamp_at(self, x: float, y: float):
         bx, by = self._view.window_to_buffer_coords(Gtk.TextWindowType.WIDGET, int(x), int(y))
-        found, it = self._view.get_iter_at_location(bx, by)
-        if not found:
-            return None
-        offset = it.get_offset()
+        # 숨긴 태그가 있는 한글 줄에서 GTK의 좌표→visible byte 변환이
+        # SIGABRT를 일으킬 수 있다. 이미 아는 문자 위치의 사각형만 조회한다.
+        line, _top = self._view.get_line_at_y(by)
+        line.set_line_offset(0)
+        end = line.copy()
+        if not end.ends_line():
+            end.forward_to_line_end()
         for stamp in parse_stamps(self._text()):
-            if stamp.start <= offset < stamp.end:
-                return stamp
+            if not line.get_offset() <= stamp.start < stamp.end <= end.get_offset():
+                continue
+            for offset in range(stamp.start, stamp.end):
+                it = self._buffer.get_iter_at_offset(offset)
+                rect = self._view.get_iter_location(it)
+                left, right = sorted((rect.x, rect.x + rect.width))
+                if left <= bx < right and rect.y <= by < rect.y + rect.height:
+                    return stamp
         return None
 
     def _on_click(self, _gesture, n_press: int, x: float, y: float) -> None:

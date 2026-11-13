@@ -121,6 +121,7 @@ class Player:
         log.info("열기: %s (codepage=%s, sub-auto=%s, 필터=%d개)",
                  Path(path).name, self._mpv.sub_codepage, self._mpv.sub_auto,
                  len(plan.sub_filters) if plan else 0)
+        self.speed = 1.0  # 이전 영상 속도가 첫 프레임부터 이어지지 않게 한다.
         self._mpv.play(str(path))
 
         if plan is not None and plan.tracks:

@@ -1818,7 +1818,8 @@ class BoraWindow(Adw.ApplicationWindow):
         self.player.set_log_level(logmod.level_name())
         if st.log_to_file and not logmod.log_file_path():
             logmod.add_log_file(str(self._log_file_target()))
-        self.player.speed = st.speed
+        st.speed = 1.0
+        self.player.speed = 1.0
         self.player.volume = st.volume
         self._vol_scale.set_value(self.player.volume)
         self.player.set_sub_style(font=st.sub_font, size=st.sub_font_size,
@@ -1919,6 +1920,10 @@ class BoraWindow(Adw.ApplicationWindow):
             self.toast(f"자막을 읽지 못했다: {exc}")
         self.player.clear_loop()        # 다른 영상에 앞 파일의 구간이 남으면 안 된다
         self.player.open(path, self._plan)
+        self.state.settings.speed = self.player.speed
+        speed_toast = getattr(self, '_speed_toast', None)
+        if speed_toast is not None:
+            speed_toast.dismiss()
         self._current = path
         self._chat.refresh_context()
         self._title.set_title(path.name)

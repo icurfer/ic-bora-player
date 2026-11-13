@@ -126,7 +126,7 @@ def main():
                 x.XCloseDisplay(display)
             pump(.2)
 
-        def actual_click(widget):
+        def actual_click(widget, fx=.5, fy=.5):
             assert os.environ.get('BORA_TEST_ISOLATED_X11') == '1'
             from gi.repository import GdkX11
             x, xt = ctypes.CDLL('libX11.so.6'), ctypes.CDLL('libXtst.so.6')
@@ -149,8 +149,8 @@ def main():
                                               ctypes.byref(left), ctypes.byref(top), ctypes.byref(child))
                 ok, bounds = widget.compute_bounds(window)
                 assert ok and widget.get_mapped()
-                assert xt.XTestFakeMotionEvent(display, -1, left.value + int(bounds.get_x() + bounds.get_width() / 2),
-                                              top.value + int(bounds.get_y() + bounds.get_height() / 2), 0)
+                assert xt.XTestFakeMotionEvent(display, -1, left.value + int(bounds.get_x() + bounds.get_width() * fx),
+                                              top.value + int(bounds.get_y() + bounds.get_height() * fy), 0)
                 assert xt.XTestFakeButtonEvent(display, 1, 1, 0)
                 assert xt.XTestFakeButtonEvent(display, 1, 0, 0)
                 x.XSync(display, False)
@@ -180,11 +180,14 @@ def main():
             video.with_suffix('.srt').write_text('1\n00:00:00,000 --> 00:00:03,900\n학습 검토 자막\n', encoding='utf-8')
             initial = State()
             initial.settings.volume = 80
+            initial.settings.speed = 1.75
             initial.save()
             app = BoraApplication(non_unique=True)
             app.register(None)
             app.activate()
             window = app.props.active_window
+            check('저장 속도1.75에도 앱 시작은1배속', window.player.speed == 1
+                  and window.state.settings.speed == 1)
             check('저장 볼륨80과 시작 슬라이더 일치', window.player.volume == 80
                   and window._vol_scale.get_value() == 80)
             window._nudge_volume(45)
@@ -201,6 +204,21 @@ def main():
             window.player._mpv.hwdec = 'no'
             window.open_path(video)
             pump(.5)
+            window._nudge_speed(.5)
+            check('현재 영상 속도 변경 유지', window.player.speed == 1.5)
+            window.open_path(folder / '없는 영상.mp4')
+            check('열기 실패는 현재 영상 속도 유지', window.player.speed == 1.5)
+            second = folder / '다음 영상.mp4'
+            import shutil
+            shutil.copyfile(video, second)
+            window.open_path(second)
+            check('다른 영상은 첫 재생부터1배속', window.player.speed == 1
+                  and window.state.settings.speed == 1 and window._speed_toast is None)
+            window._nudge_speed(.75)
+            window.open_path(second)
+            check('동일 영상 다시 열기도1배속', window.player.speed == 1)
+            window.open_path(video)
+            pump(.3)
             window.player.paused = True
             notes, chat = window._notes, window._chat
             window.show_chat()
@@ -476,6 +494,13 @@ def main():
                     chat._study_preview.close()
                 chat.doc.messages.append({'role': 'user', 'content': '플레이어 종료 자동 기록', 'timestamp': 3})
                 chat._dirty = True
+                window.toggle_notes(True)
+                window.set_default_size(960, 700)
+                pump(.3)
+                before_pointer = notes._text()
+                for fx, fy in ((.15,.15),(.4,.3),(.7,.6)):
+                    actual_click(notes._view, fx, fy)
+                check('한글·숨긴 마크다운 실제 마우스 조작 보존', window.player.alive and notes._text() == before_pointer)
                 closing = window
                 window.close()
                 pump(.2)
