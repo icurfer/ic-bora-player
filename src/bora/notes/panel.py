@@ -30,7 +30,7 @@ log = get_logger("notes.panel")
 class NotePanel(Gtk.Box):
     """우측 메모 패널. 플레이어 창(parent)의 재생 위치를 읽고 쓴다."""
 
-    AUTOSAVE_MS = 2000          # 입력이 멈추고 이만큼 지나면 저장한다
+    AUTOSAVE_MS = 1000          # 마지막 입력 뒤 1초가 지나면 저장한다
     STAMP_TAG = "stamp"
 
     def __init__(self, window) -> None:
@@ -165,7 +165,8 @@ class NotePanel(Gtk.Box):
 
         bar.append(Gtk.Label(hexpand=True))
 
-        save = Gtk.Button(icon_name="document-save-symbolic", tooltip_text="저장 (Ctrl+S)")
+        save = Gtk.Button(icon_name="document-save-symbolic",
+                          tooltip_text="저장 (Ctrl+S) · 입력을 멈추면 1초 후 자동 저장")
         save.connect("clicked", lambda *_: self.save(force=True))
         bar.append(save)
 
@@ -517,7 +518,7 @@ class NotePanel(Gtk.Box):
         if self._loading or self.doc is None:
             return
         self._retag()
-        self._update_status("편집 중")
+        self._update_status("편집 중 · 1초 후 자동 저장")
         self._schedule_autosave()
 
     def _schedule_autosave(self) -> None:

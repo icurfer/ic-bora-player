@@ -157,3 +157,71 @@ def test_save_elsewhere_close_keeps_original(failing_panel,tmp_path,monkeypatch)
     chooser.callback(chooser,Gtk.ResponseType.ACCEPT);pump()
     assert dest.read_text()=='미저장 본문' and not panel.doc.path.exists()
     assert events[-1]=='closed'
+
+
+@pytest.fixture
+def autosave_panel(tmp_path):
+    from bora.notes.panel import NotePanel
+    Gtk.init()
+    panel=NotePanel.__new__(NotePanel)
+    Gtk.Box.__init__(panel)
+    panel.window=SimpleNamespace(toast=lambda _:None)
+    panel.doc=NoteDocument(tmp_path/'autosave.md')
+    panel._save_id=0;panel._loading=False;panel._last_line=-1
+    panel._ask=None;panel._ask_generation=0;panel._answer_mark=None
+    panel._buffer=Gtk.TextBuffer();panel._status=Gtk.Label()
+    panel._make_tags()
+    panel._buffer.connect('changed',panel._on_changed)
+    yield panel
+    panel._cancel_autosave()
+
+
+def run_until(condition,seconds):
+    end=time.monotonic()+seconds
+    while time.monotonic()<end:
+        GLib.MainContext.default().iteration(False)
+        if condition():return True
+        time.sleep(.005)
+    return bool(condition())
+
+
+def test_autosave_one_second_after_last_input(autosave_panel):
+    panel=autosave_panel;path=panel.doc.path
+    panel._buffer.insert_at_cursor('# 한글 메모\n')
+    run_until(lambda:False,.65)
+    panel._buffer.insert_at_cursor('추가 입력')
+    run_until(lambda:False,.55)
+    assert not path.exists() # 첫 입력에서1초가 지나도 추가입력의 대기시간을 지킨다.
+    assert run_until(path.exists,.7) # 기존2초 지연이면 여기까지 저장되지 않는다.
+    assert path.read_text()=='# 한글 메모\n추가 입력\n'
+    assert not panel.doc.dirty and '저장됨' in panel._status.get_label()
+    assert panel._save_id==0
+
+
+@pytest.mark.parametrize('code',[errno.EROFS,errno.ENOSPC])
+def test_autosave_failure_preserves_body_and_can_retry(autosave_panel,monkeypatch,code):
+    panel=autosave_panel;original=panel.doc.save
+    def fail():raise OSError(code,'fixture')
+    monkeypatch.setattr(panel.doc,'save',fail)
+    panel._buffer.insert_at_cursor('보존할 본문')
+    assert run_until(lambda:'저장 실패' in panel._status.get_label(),1.5)
+    assert panel.doc.dirty and panel._text()=='보존할 본문' and not panel.doc.path.exists()
+    assert panel._save_id==0 # 실패한 저장을 무한 반복하지 않는다.
+    monkeypatch.setattr(panel.doc,'save',original)
+    panel._buffer.insert_at_cursor(' 다시 편집')
+    assert run_until(panel.doc.path.exists,1.5)
+    assert panel.doc.path.read_text()=='보존할 본문 다시 편집\n' and not panel.doc.dirty
+
+
+def test_pending_autosave_flushes_before_switch_and_protects_external_change(autosave_panel,tmp_path):
+    panel=autosave_panel;first=panel.doc.path
+    panel._buffer.insert_at_cursor('이전 영상 메모')
+    assert panel.load_for(tmp_path/'second.mp4')
+    assert first.read_text()=='이전 영상 메모\n' and panel._save_id==0
+    panel._buffer.insert_at_cursor('새 영상 메모')
+    second=panel.doc.path
+    second.write_text('외부에서 작성한 원본')
+    assert run_until(lambda:panel._save_id==0,1.5)
+    assert second.read_text()=='외부에서 작성한 원본'
+    assert '새 영상 메모' in panel._text() and panel.doc.dirty
+    assert '외부 변경' in panel._status.get_label()
