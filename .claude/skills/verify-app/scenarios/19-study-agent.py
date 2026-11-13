@@ -213,7 +213,8 @@ def main():
             shutil.copyfile(video, second)
             window.open_path(second)
             check('다른 영상은 첫 재생부터1배속', window.player.speed == 1
-                  and window.state.settings.speed == 1 and window._speed_toast is None)
+                  and window.state.settings.speed == 1
+                  and (window._speed_toast is None or window._speed_toast.get_title() == '재생 속도 1x'))
             window._nudge_speed(.75)
             window.open_path(second)
             check('동일 영상 다시 열기도1배속', window.player.speed == 1)

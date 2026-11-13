@@ -1923,7 +1923,7 @@ class BoraWindow(Adw.ApplicationWindow):
         self.state.settings.speed = self.player.speed
         speed_toast = getattr(self, '_speed_toast', None)
         if speed_toast is not None:
-            speed_toast.dismiss()
+            speed_toast.set_title(f'재생 속도 {self.player.speed:g}x')
         self._current = path
         self._chat.refresh_context()
         self._title.set_title(path.name)
