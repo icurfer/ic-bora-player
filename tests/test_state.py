@@ -163,3 +163,50 @@ def test_terminal_provider_persists_and_invalid_value_defaults(tmp_path):
     raw['settings']['terminal_provider'] = 'unknown'
     state.path.write_text(json.dumps(raw))
     assert State(tmp_path).settings.terminal_provider == 'codex'
+
+
+def test_remote_recent_survives_restart_without_touching_old_mount(tmp_path,monkeypatch):
+    from bora import network
+    from bora.state import Pin
+    monkeypatch.setattr(network,'_remote_roots',{})
+    monkeypatch.setattr(network,'_remote_files',{})
+    old=tmp_path/'old';old.mkdir();video=_video(old,'한글 영상.mkv')
+    network.remember_remote(old,'nfs://nas/export',root=True)
+    state=State(tmp_path/'cfg')
+    state.note_playback(video,45,120);state.add_pin(video,Pin(12,label='keep'));state.save()
+    raw=json.loads(state.path.read_text())
+    assert raw['schema']==1 and len(raw['recent_remote'])==1
+    # 구버전 dataclass가 모르는 필드를 기존 record에 추가하지 않는다.
+    assert 'uri' not in next(iter(raw['recent'].values()))
+    video.unlink();old.rmdir();network._remote_roots.clear()
+    again=State(state.dir)
+    original_exists=Path.exists
+    def no_old_probe(path):
+        assert not path.is_relative_to(old),'offline mount was probed'
+        return original_exists(path)
+    monkeypatch.setattr(Path,'exists',no_old_probe)
+    items=again.recent_items()
+    assert len(items)==1 and items[0].connection_uri=='nfs://nas/export'
+    assert network.relative_media(items[0].connection_uri,items[0].uri)=='한글 영상.mkv'
+    new=tmp_path/'new';new.mkdir();reopened=_video(new,'한글 영상.mkv')
+    network.remember_remote(new,'nfs://nas/export',root=True)
+    assert again.resume_for(reopened)==45 and again.pins_for(reopened)[0].label=='keep'
+    again.note_playback(reopened,50,120);again.save()
+    assert len(again.recent_items())==1 and again.recent_items()[0].path==str(reopened)
+
+
+def test_remote_metadata_cannot_add_password_or_redirect_account(tmp_path):
+    video=_video(tmp_path);state=State(tmp_path/'cfg')
+    state.note_playback(video,45,120);state.save()
+    raw=json.loads(state.path.read_text());key=next(iter(raw['recent']))
+    for location in ({'uri':'sftp://user:secret@nas/video'},
+                     {'uri':'sftp://a@nas/share/video','connection_uri':'sftp://b@nas/share'},
+                     {'uri':'nfs://nas/export/video','connection_uri':42}):
+        raw['recent_remote']={key:location};state.path.write_text(json.dumps(raw))
+        again=State(state.dir)
+        assert again.resume_for(video)==45 and not again.recent[key].uri
+    # URI가 없는 옛 임시 경로를 추정 이관하지 않는다.
+    raw.pop('recent_remote');raw['recent'][key]['path']='/missing/old-mount/video.mkv'
+    state.path.write_text(json.dumps(raw))
+    again=State(state.dir)
+    assert len(again.recent)==1 and again.recent_items()==[]

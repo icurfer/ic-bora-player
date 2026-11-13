@@ -7,7 +7,7 @@ from .platform import paths, network
 
 
 class NetworkWindow(Gtk.Window):
-    def __init__(self, parent, open_file, *, backend=None, store=None, session=None):
+    def __init__(self, parent, open_file, *, backend=None, store=None, session=None, restore=True):
         super().__init__(title='네트워크 서버 열기', transient_for=parent,
                          default_width=640, default_height=620, destroy_with_parent=True)
         header = Gtk.HeaderBar()
@@ -21,6 +21,7 @@ class NetworkWindow(Gtk.Window):
         self.closed = False
         self.busy = False
         self.generation = 0
+        self._recent_request = None
         self.connect('close-request', self._close)
         self.connect('unrealize', self._close)
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10,
@@ -82,7 +83,7 @@ class NetworkWindow(Gtk.Window):
         if backend is None and not network.available():
             self.status.set_text(network.reason())
             self.connect_button.set_sensitive(False)
-        if session is not None and getattr(session, 'last_location', None) is not None:
+        if restore and session is not None and getattr(session, 'last_location', None) is not None:
             if session.last_server:
                 self.name.set_text(session.last_server.name)
                 self.address.set_text(session.last_server.uri)
@@ -108,6 +109,7 @@ class NetworkWindow(Gtk.Window):
             self.servers.append(row)
 
     def _select_server(self, server):
+        self._recent_request = None  # 즐겨찾기 선택은 이전 파일 재시도와 별개의 탐색이다.
         self.name.set_text(server.name)
         self.address.set_text(server.uri)
         self.connect_server()
@@ -141,7 +143,25 @@ class NetworkWindow(Gtk.Window):
         except ValueError as error:
             self.status.set_text(str(error))
             return
+        if self._recent_request and file.equal(Gio.File.new_for_uri(self._recent_request[1])):
+            self.reopen_recent(*self._recent_request)
+            return
+        self._recent_request = None
         self._browse(file, remember=True)
+
+    def reopen_recent(self, uri, connection):
+        """사용자가 고른 최근 항목만 연결한다. 앱 시작/메뉴 표시에서는 부르지 않는다."""
+        if self.closed:
+            return
+        from .network import relative_media
+        try:
+            relative = relative_media(connection, uri)
+        except ValueError:
+            self.status.set_text('최근 파일의 연결 폴더를 확인할 수 없습니다. 저장된 서버에서 영상을 다시 선택하세요.')
+            return
+        self._recent_request = (uri, connection)
+        self.address.set_text(connection)
+        self._browse(Gio.File.new_for_uri(connection), target=relative)
 
     def _set_busy(self, busy):
         self.busy = busy
@@ -152,7 +172,7 @@ class NetworkWindow(Gtk.Window):
                               and (not hasattr(self.browser, 'can_go_up') or self.browser.can_go_up(self.current)))
         self.refresh.set_sensitive(not busy and self.current is not None)
 
-    def _browse(self, file, remember=False):
+    def _browse(self, file, remember=False, target=None):
         if file is None or self.closed:
             return
         self.generation += 1
@@ -200,6 +220,16 @@ class NetworkWindow(Gtk.Window):
                 button.connect('clicked', lambda _b, f=child, d=directory: self._activate(f, d))
                 self.files.append(button)
             self.status.set_text(message or ('폴더가 비어 있습니다.' if not entries else '폴더를 열거나 재생할 영상을 선택하세요.'))
+            if target is not None:
+                if self.session is not None:
+                    self.session.last_server = Server(file.get_uri(), file.get_uri())
+                self.status.set_text('연결됨 · 최근 영상을 열고 있습니다…')
+                target_file = self.current.resolve_relative_path(target)
+                self._activate(target_file, False)
+                if self.closed and self.session is not None:
+                    self.session.last_location = target_file.get_parent()
+                if not self.closed:
+                    self.status.set_text('최근 영상을 열지 못했습니다. 파일·메모 저장 상태를 확인하거나 다른 영상을 선택하세요.')
         self.browser.browse(file.get_uri(), done)
 
     def _activate(self, file, directory):

@@ -35,6 +35,41 @@ def media_identity(path):
     return remote_uri(path) or str(Path(path).resolve())
 
 
+def relative_media(connection, media):
+    """같은 계정/서버의 연결 폴더 안에 있는 파일만 상대 경로로 돌려준다."""
+    base, target = urlsplit(server_uri(connection)), urlsplit(server_uri(media))
+    prefix = base.path.rstrip('/') + '/'
+    if ((base.scheme, base.netloc) != (target.scheme, target.netloc)
+            or not target.path.startswith(prefix)):
+        raise ValueError('최근 파일 주소가 연결 폴더와 일치하지 않습니다.')
+    relative = unquote(target.path[len(prefix):])
+    if (not relative or '\\' in relative
+            or any(part in ('', '.', '..') for part in relative.split('/'))):
+        raise ValueError('최근 파일 경로를 확인할 수 없습니다.')
+    return relative
+
+
+def remote_location(path):
+    """마운트 임시 경로 대신 파일 주소와 재접속 기준 폴더를 보관한다."""
+    uri = remote_uri(path)
+    if uri is None:
+        return '', ''
+    path = Path(path).resolve()
+    for root in sorted(_remote_roots, key=lambda p: len(p.parts), reverse=True):
+        if path.is_relative_to(root):
+            connection = _remote_roots[root]
+            try:
+                relative_media(connection, uri)
+                return uri, connection
+            except ValueError:
+                continue
+    parsed = urlsplit(uri)
+    if parsed.scheme == 'nfs':
+        return uri, ''  # 내보내기 루트는 파일 주소만으로 추정하지 않는다.
+    parent = parsed.path.rsplit('/', 1)[0] or '/'
+    return uri, urlunsplit((parsed.scheme, parsed.netloc, parent, '', ''))
+
+
 def server_uri(value):
     try:
         if not isinstance(value, str) or any(ord(c) < 32 for c in value):

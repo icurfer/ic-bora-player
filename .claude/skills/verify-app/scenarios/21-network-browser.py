@@ -2,7 +2,7 @@
 """실제 GTK 키입력과 좁은 창·재생 전달. 원격 서버 응답은 모의다."""
 import ctypes,os,subprocess,sys,tempfile,time
 import faulthandler
-faulthandler.dump_traceback_later(120, repeat=False)
+faulthandler.dump_traceback_later(240, repeat=False)
 from pathlib import Path
 if os.environ.get('BORA_VERIFY_INSTALLED')!='1':
     sys.path.insert(0,str(Path(__file__).resolve().parents[4]/'src'))
@@ -43,6 +43,7 @@ with tempfile.TemporaryDirectory(prefix='bora-network-ui-') as directory:
         assert widget.grab_focus()
         pump(.02)
         x.XSetInputFocus(display,GdkX11.X11Surface.get_xid(widget.get_root().get_surface()),2,0)
+        x.XSync(display,False);pump(.08) # 닫힌 팝업의 FocusOut/새 창 FocusIn을 먼저 처리한다.
         code=x.XKeysymToKeycode(display,x.XStringToKeysym(key.encode()))
         assert xt.XTestFakeKeyEvent(display,code,1,0);assert xt.XTestFakeKeyEvent(display,code,0,0)
         x.XSync(display,False);pump(delay)
@@ -52,6 +53,21 @@ with tempfile.TemporaryDirectory(prefix='bora-network-ui-') as directory:
             if condition():return True
             pump(.01)
         return bool(condition())
+    def click(widget):
+        native=widget.get_root()
+        ok,bounds=widget.compute_bounds(native);assert ok
+        x.XDefaultRootWindow.argtypes=[ctypes.c_void_p];x.XDefaultRootWindow.restype=ctypes.c_ulong
+        x.XTranslateCoordinates.argtypes=[ctypes.c_void_p,ctypes.c_ulong,ctypes.c_ulong,
+            ctypes.c_int,ctypes.c_int,ctypes.POINTER(ctypes.c_int),ctypes.POINTER(ctypes.c_int),ctypes.POINTER(ctypes.c_ulong)]
+        left,top,child=ctypes.c_int(),ctypes.c_int(),ctypes.c_ulong()
+        assert x.XTranslateCoordinates(display,GdkX11.X11Surface.get_xid(native.get_surface()),
+            x.XDefaultRootWindow(display),0,0,ctypes.byref(left),ctypes.byref(top),ctypes.byref(child))
+        xt.XTestFakeMotionEvent.argtypes=[ctypes.c_void_p,ctypes.c_int,ctypes.c_int,ctypes.c_int,ctypes.c_ulong]
+        xt.XTestFakeButtonEvent.argtypes=[ctypes.c_void_p,ctypes.c_uint,ctypes.c_int,ctypes.c_ulong]
+        assert xt.XTestFakeMotionEvent(display,-1,left.value+int(bounds.get_x()+bounds.get_width()/2),
+            top.value+int(bounds.get_y()+bounds.get_height()/2),0)
+        assert xt.XTestFakeButtonEvent(display,1,1,0);assert xt.XTestFakeButtonEvent(display,1,0,0)
+        x.XSync(display,False);pump(.2)
     class Backend:
         def __init__(self):self.calls=[]
         def browse(self,uri,done):self.calls.append((uri,done))
@@ -102,6 +118,50 @@ with tempfile.TemporaryDirectory(prefix='bora-network-ui-') as directory:
     assert .9<=elapsed<1.5 and not panel.doc.dirty
     ImageGrab.grab(xdisplay=os.environ['DISPLAY']).save(shots/'autosave-saved.png')
     print(f'actual-key autosave after last input: {elapsed:.3f}s',flush=True)
+    # 재시작을 모의해 옛 마운트 경로가 없어진 최근 항목을 실제 메뉴에서 고른다.
+    from unittest.mock import patch
+    from bora import network as identities
+    from bora.state import State
+    old=root/'old-mount';old.mkdir();old_video=old/'최근 영상.mp4';os.link(video,old_video)
+    identities.remember_remote(old,'nfs://example.test/export',root=True)
+    owner.state.note_playback(old_video,45,120,title='원격 최근 영상')
+    owner.state.save();state_dir=owner.state.dir
+    shutil.rmtree(old);identities._remote_roots.clear();identities._remote_files.clear()
+    owner.state=State(state_dir)
+    recent=next(item for item in owner.state.recent_items() if item.title=='원격 최근 영상')
+    mounted=root/'new-mount';mounted.mkdir();reopened=mounted/old_video.name;os.link(video,reopened)
+    recent_backend=Backend()
+    def descendants(widget):
+        yield widget
+        child=widget.get_first_child()
+        while child is not None:
+            yield from descendants(child)
+            child=child.get_next_sibling()
+    with patch('bora.network_window.network.Browser',return_value=recent_backend), \
+         patch('bora.network_window.network.available',return_value=True):
+        click(owner._menu_button)
+        assert owner._main_popover.get_visible()
+        assert recent_backend.calls==[] # 메뉴 표시만으로 접속하지 않는다.
+        recent_button=next(w for w in descendants(owner._main_popover)
+                           if isinstance(w,Gtk.Button) and any(isinstance(c,Gtk.Label) and
+                              c.get_text()=='원격 최근 영상' for c in descendants(w)))
+        press(recent_button)
+        reconnect=owner._network_window
+        assert reconnect.busy and recent_backend.calls[-1][0]=='nfs://example.test/export'
+        late=recent_backend.calls[-1][1];press(reconnect.cancel_button)
+        late((Gio.File.new_for_path(str(mounted)),[]),'')
+        assert owner.current_path==second and not reconnect.closed
+        press(reconnect.connect_button);recent_backend.calls[-1][1](None,'모의 인증 거부')
+        assert '인증 거부' in reconnect.status.get_text()
+        press(reconnect.connect_button)
+        identities.remember_remote(mounted,'nfs://example.test/export',root=True)
+        recent_backend.calls[-1][1]((Gio.File.new_for_path(str(mounted)),[]),'');pump(.2)
+        assert owner.current_path==reopened and reconnect.closed
+        assert owner.state.resume_for(reopened)==45
+        assert owner._notes.doc.path.is_relative_to(root/'DATA')
+        assert not (mounted/'최근 영상.md').exists()
+        assert owner._network_session.last_location.get_path()==str(mounted)
+    print('actual-key remote recent: offline menu, cancel/late result, auth retry and changed mount passed; server mocked',flush=True)
     # 실제 파일 버튼으로 전환하고 메모 입력도 XTest를 사용한다.
     # 서버 목록 응답은 모의이며 매번 다른 임시 영상/메모를 쓴다.
     expected={}
@@ -119,7 +179,7 @@ with tempfile.TemporaryDirectory(prefix='bora-network-ui-') as directory:
         assert picker.closed and owner.player.speed==1.0 and owner._chat._path==target
         assert panel.doc.path==target.with_suffix('.md')
         press(panel._view,'x',.02)
-        assert panel._text().endswith('x'), (index,repr(panel._text()),owner.get_focus())
+        assert until(lambda:panel._text().endswith('x')), (index,repr(panel._text()),owner.get_focus())
         expected[panel.doc.path]=panel._text()+'\n'
         picker.destroy()
         if index%20==19:print(f'actual-key file switch and memo: {index+1}/100',flush=True)

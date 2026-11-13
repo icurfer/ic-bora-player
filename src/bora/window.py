@@ -666,9 +666,9 @@ class BoraWindow(Adw.ApplicationWindow):
             box.append(Gtk.Label(label=f"최근 파일 {len(recent)}개", xalign=0,
                                  css_classes=["dim-label"]))
             for item in recent[:8]:
-                btn = Gtk.Button(label=item.title, has_frame=False)
-                btn.set_tooltip_text(item.path)
-                btn.connect("clicked", self._on_recent_clicked, item.path)
+                btn = Gtk.Button(label=("네트워크 · " if item.uri else "") + item.title, has_frame=False)
+                btn.set_tooltip_text(item.uri or item.path)
+                btn.connect("clicked", self._on_recent_clicked, item)
                 box.append(btn)
         box.append(Gtk.Separator(margin_top=4))
         codex = Gtk.Button(label="AI 연결 · 로그인/API 키")
@@ -745,9 +745,28 @@ class BoraWindow(Adw.ApplicationWindow):
             return True         # 실패하면 스위치를 되돌린다
         return False
 
-    def _on_recent_clicked(self, _button, path: str) -> None:
+    def _on_recent_clicked(self, _button, item) -> None:
         self._close_menus()
-        self.open_path(Path(path))
+        self.open_recent(item)
+
+    def open_recent(self, item) -> None:
+        if not item.uri:
+            self.open_path(Path(item.path))
+            return
+        from .network_window import NetworkWindow
+        from .platform.network import Session
+        existing = getattr(self, '_network_window', None)
+        if existing is not None and not existing.closed:
+            existing.close()
+        if getattr(self, '_network_session', None) is None:
+            self._network_session = Session()
+        def open_remote(path):
+            self.open_path(path)
+            return self._current == path
+        dialog = NetworkWindow(self, open_remote, session=self._network_session, restore=False)
+        self._network_window = dialog
+        dialog.present()
+        dialog.reopen_recent(item.uri, item.connection_uri)
 
     # ── 학습 메모 ────────────────────────────────────────────────────────
     def _sync_study(self):
@@ -1570,8 +1589,8 @@ class BoraWindow(Adw.ApplicationWindow):
             box.append(Gtk.Label(label="최근 파일", xalign=0, margin_start=6,
                                  css_classes=["dim-label"]))
             for item in recent[:5]:
-                box.append(self._menu_row(item.title, "",
-                                          lambda p=item.path: self.open_path(Path(p))))
+                box.append(self._menu_row(item.title, "", lambda i=item: self.open_recent(i),
+                                          "네트워크 · 선택하면 다시 연결" if item.uri else ""))
         return box
 
     def show_ai_settings(self):

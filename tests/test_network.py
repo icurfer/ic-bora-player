@@ -153,3 +153,65 @@ def test_shutdown_waits_for_connection_already_in_flight(tmp_path):
     session.take(mount);session.end();assert done==[]
     calls[0](mount,None)
     assert done==[[]]
+
+
+@pytest.mark.parametrize('uri,connection',[
+    ('sftp://a@nas/share/lesson.mp4','sftp://b@nas/share'),
+    ('smb://nas/other/lesson.mp4','smb://nas/share'),
+    ('nfs://nas/export2/lesson.mp4','nfs://nas/export'),
+    ('nfs://nas/export/../other/lesson.mp4','nfs://nas/export'),
+    ('nfs://nas/export/%2e%2e/lesson.mp4','nfs://nas/export'),
+    ('sftp://u:secret@nas/share/lesson.mp4','sftp://u@nas/share'),
+])
+def test_recent_relative_rejects_other_account_root_and_escape(uri,connection):
+    from bora.network import relative_media
+    with pytest.raises(ValueError):relative_media(connection,uri)
+
+
+@pytest.mark.parametrize('scheme',['smb','sftp','ftp','nfs'])
+def test_remote_location_and_recent_retry_cancel(window,tmp_path,monkeypatch,scheme):
+    from bora import network
+    monkeypatch.setattr(network,'_remote_roots',{})
+    monkeypatch.setattr(network,'_remote_files',{})
+    connection=f'{scheme}://nas/share'
+    network.remember_remote(tmp_path,connection,root=True)
+    video=tmp_path/'folder'/'한글 영상.mp4'
+    uri,root=network.remote_location(video)
+    assert root==connection and network.relative_media(root,uri)=='folder/한글 영상.mp4'
+    w=window;w.reopen_recent(uri,root)
+    assert w.busy and w.browser.calls[-1][0]==Gio.File.new_for_uri(root).get_uri()
+    late=w.browser.calls[-1][1]
+    w.cancel();late((Gio.File.new_for_path(str(tmp_path)),[]),'')
+    assert w.opened==[] and w.current is None
+    w.connect_server();w.browser.calls[-1][1](None,'인증 거부')
+    assert '인증 거부' in w.status.get_text() and not w.busy
+    w.connect_server();w.browser.calls[-1][1]((Gio.File.new_for_path(str(tmp_path)),[]),'')
+    assert w.opened==[video] and not w.store.path.exists()
+
+
+def test_recent_target_missing_and_close_ignore_late_open(window,tmp_path):
+    w=window;w.open_file=lambda path:False
+    w.reopen_recent('nfs://nas/export/missing.mp4','nfs://nas/export')
+    w.browser.calls[-1][1]((Gio.File.new_for_path(str(tmp_path)),[]),'')
+    assert not w.closed and '열지 못했습니다' in w.status.get_text()
+    w.reopen_recent('nfs://nas/export/late.mp4','nfs://nas/export')
+    callback=w.browser.calls[-1][1];w._close() # 창 없는 통합 검사는 close-request 경계를 직접 실행한다.
+    callback((Gio.File.new_for_path(str(tmp_path)),[]),'')
+    assert w.opened==[]
+
+
+@pytest.mark.parametrize('scheme',['smb','sftp','ftp','nfs'])
+def test_file_mapping_uses_parent_but_never_guesses_nfs_export(tmp_path,monkeypatch,scheme):
+    from bora import network
+    monkeypatch.setattr(network,'_remote_roots',{})
+    monkeypatch.setattr(network,'_remote_files',{})
+    path=tmp_path/'video.mp4';uri=f'{scheme}://nas/share/folder/video.mp4'
+    network.remember_remote(path,uri)
+    assert network.remote_location(path)==(uri,'' if scheme=='nfs' else f'{scheme}://nas/share/folder')
+
+
+def test_saved_server_after_recent_cancel_browses_instead_of_opening_old_target(window,tmp_path):
+    w=window;w.reopen_recent('nfs://nas/export/old.mp4','nfs://nas/export');w.cancel()
+    w._select_server(Server('NAS','nfs://nas/export'))
+    w.browser.calls[-1][1]((Gio.File.new_for_path(str(tmp_path)),[]),'')
+    assert w.opened==[] and not w.closed and w.store.load()[0].name=='NAS'

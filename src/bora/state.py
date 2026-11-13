@@ -105,6 +105,8 @@ class RecentItem:
     sub_track: str = ""
     pins: list = field(default_factory=list)        # [{start, end, label, created}]
     updated: float = field(default_factory=time.time)
+    uri: str = ''
+    connection_uri: str = ''
 
     @property
     def resumable(self) -> bool:
@@ -176,6 +178,23 @@ class State:
         for key, item in (raw.get("recent") or {}).items():
             try:
                 record = RecentItem(**item)
+                # 주소는 별도 표에 둬 구버전의 RecentItem 읽기도 유지한다.
+                record.uri = record.connection_uri = ''
+                locations = raw.get('recent_remote', {})
+                location = locations.get(key, {}) if isinstance(locations, dict) else {}
+                if isinstance(location, dict) and location.get('uri'):
+                    from .network import server_uri, relative_media
+                    try:
+                        uri = server_uri(location['uri'])
+                        connection = location.get('connection_uri', '')
+                        if not isinstance(connection, str):
+                            raise ValueError('연결 폴더 주소 형식 오류')
+                        if connection:
+                            connection = server_uri(connection)
+                            relative_media(connection, uri)
+                        record.uri, record.connection_uri = uri, connection
+                    except (ValueError, TypeError):
+                        pass # 잘못된 주소는 접속하지 않고 기존 기록은 보존한다.
                 if not all(isinstance(getattr(record, name), str)
                            for name in ("path", "title", "sub_track")):
                     continue
@@ -201,10 +220,18 @@ class State:
         log.debug("설정 로드: 최근 %d개", len(self.recent))
 
     def save(self) -> None:
+        records, locations = {}, {}
+        for key, item in self.recent.items():
+            records[key] = asdict(item)
+            for name in ('uri', 'connection_uri'):
+                records[key].pop(name)
+            if item.uri:
+                locations[key] = {'uri': item.uri, 'connection_uri': item.connection_uri}
         data = {
             "schema": SCHEMA,
             "settings": asdict(self.settings),
-            "recent": {k: asdict(v) for k, v in self.recent.items()},
+            "recent": records,
+            "recent_remote": locations,
         }
         try:
             self.dir.mkdir(parents=True, exist_ok=True)
@@ -222,6 +249,8 @@ class State:
         finished = bool(duration) and position / duration >= WATCHED_RATIO
         key = _key(path)
         previous = self.recent.get(key)
+        from .network import remote_location
+        uri, connection = remote_location(path)
         item = RecentItem(
             path=str(Path(path).resolve()),
             title=title or Path(path).name,
@@ -229,6 +258,7 @@ class State:
             duration=float(duration or 0.0),
             finished=finished,
             sub_track=sub_track,
+            uri=uri, connection_uri=connection,
             # 재생 위치를 기록한다고 핀을 잃으면 안 된다.
             pins=list(previous.pins) if previous else [],
         )
@@ -261,7 +291,10 @@ class State:
         key = _key(path)
         item = self.recent.get(key)
         if item is None:
-            item = RecentItem(path=str(Path(path).resolve()), title=Path(path).name)
+            from .network import remote_location
+            uri, connection = remote_location(path)
+            item = RecentItem(path=str(Path(path).resolve()), title=Path(path).name,
+                              uri=uri, connection_uri=connection)
             self.recent[key] = item
         item.pins.append(asdict(pin))
         self.save()
@@ -279,8 +312,8 @@ class State:
         return True
 
     def recent_items(self) -> list[RecentItem]:
-        """최근 순. 사라진 파일은 걸러 낸다."""
-        items = [i for i in self.recent.values() if Path(i.path).exists()]
+        """원격 항목은 접속하지 않고 표시한다. 로컬에서 사라진 파일은 거른다."""
+        items = [i for i in self.recent.values() if i.uri or Path(i.path).exists()]
         return sorted(items, key=lambda i: i.updated, reverse=True)
 
     def forget_all(self) -> None:
