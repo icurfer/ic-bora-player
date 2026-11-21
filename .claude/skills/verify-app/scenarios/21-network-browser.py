@@ -7,6 +7,17 @@ from pathlib import Path
 if os.environ.get('BORA_VERIFY_INSTALLED')!='1':
     sys.path.insert(0,str(Path(__file__).resolve().parents[4]/'src'))
 assert os.environ.get('BORA_TEST_ISOLATED_X11')=='1'
+# CI 로그를 열 수 없어도 실패 위치와 실측값은 Checks API에 남긴다.
+def report_failure(kind, value, tb):
+    sys.__excepthook__(kind, value, tb)
+    if os.environ.get('GITHUB_ACTIONS')=='true':
+        import traceback
+        from bora.log import redact
+        message=redact(''.join(traceback.format_exception(kind,value,tb))[-6000:])
+        message=message.replace('%','%25').replace('\r','%0D').replace('\n','%0A')
+        print('::error::'+message,flush=True)
+sys.excepthook=report_failure
+
 with tempfile.TemporaryDirectory(prefix='bora-network-ui-') as directory:
     root=Path(directory)
     for name in ('CONFIG','CACHE','DATA'):os.environ[f'XDG_{name}_HOME']=str(root/name)
@@ -121,13 +132,13 @@ with tempfile.TemporaryDirectory(prefix='bora-network-ui-') as directory:
     assert not window.connection_form.get_expanded()
     for width,height,name in ((800,720,'normal'),(480,580,'narrow')):
         window.set_default_size(width,height);pump()
-        assert window.files_scroll.get_allocated_height()>=240
+        assert window.files_scroll.get_allocated_height()>=240, ('list too short',width,height,window.get_width(),window.get_height(),window.files_scroll.get_allocated_height())
         print('list layout:',width,height,'actual window:',window.get_width(),window.get_height(),
               'list:',window.files_scroll.get_allocated_width(),window.files_scroll.get_allocated_height(),flush=True)
         ImageGrab.grab(xdisplay=os.environ['DISPLAY']).save(shots/f'{name}.png')
     # 좁은 창에서 연결 정보를 다시 펼쳐도 입력·취소에 접근한다.
     window.connection_form.set_expanded(True);pump(.1)
-    assert window.get_height()<=600
+    assert window.get_height()<=600, ('expanded window too tall',window.get_width(),window.get_height())
     press(window.address,'Tab',delay=.02)
     window.connection_form.set_expanded(False);pump(.1)
     Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.FORCE_DARK);pump(.1)
