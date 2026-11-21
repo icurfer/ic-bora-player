@@ -112,15 +112,54 @@ with tempfile.TemporaryDirectory(prefix='bora-network-ui-') as directory:
             ImageGrab.grab(xdisplay=os.environ['DISPLAY']).save(shots/'sftp-custom.png')
     print('actual-key protocol dropdown/default ports/custom ports/favorite restore passed; server mocked',flush=True)
     press(window.connect_button)
+    assert window.content.get_visible_child_name()=='loading' and window.spinner.get_spinning()
+    pump(.1)
+    ImageGrab.grab(xdisplay=os.environ['DISPLAY']).save(shots/'folder-loading.png')
     window.browser.calls[-1][1]((Gio.File.new_for_path(str(root)),[(video.name,video.name,False)]),'');pump()
     assert '읽기 전용 NFS' in window.storage_notice.get_text() and not window.up.get_sensitive()
-    assert window.location.get_text()=='nfs://example.test/share'
-    for width,height,name in ((640,620,'normal'),(480,580,'narrow')):
+    assert window.location.get_text()=='NFS 서버 · /share'
+    assert not window.connection_form.get_expanded()
+    for width,height,name in ((800,720,'normal'),(480,580,'narrow')):
         window.set_default_size(width,height);pump()
-        assert window.files.get_allocated_height()>0
+        assert window.files_scroll.get_allocated_height()>=240
+        print('list layout:',width,height,'actual window:',window.get_width(),window.get_height(),
+              'list:',window.files_scroll.get_allocated_width(),window.files_scroll.get_allocated_height(),flush=True)
         ImageGrab.grab(xdisplay=os.environ['DISPLAY']).save(shots/f'{name}.png')
+    # 좁은 창에서 연결 정보를 다시 펼쳐도 입력·취소에 접근한다.
+    window.connection_form.set_expanded(True);pump(.1)
+    assert window.get_height()<=600
+    press(window.address,'Tab',delay=.02)
+    window.connection_form.set_expanded(False);pump(.1)
+    Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.FORCE_DARK);pump(.1)
+    ImageGrab.grab(xdisplay=os.environ['DISPLAY']).save(shots/'narrow-dark.png')
+    Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.DEFAULT);pump(.1)
     press(window.files.get_first_child().get_child());pump(.8)
-    assert owner.current_path==video and owner.player.duration>0 and window.closed
+    assert owner.current_path==video and (owner.player.duration or 0)>0 and window.closed
+    # 실제 mpv EOF keep-open 뒤 같은 파일을 다시 열면 자동으로 재생한다.
+    assert until(lambda:bool(owner.player._mpv.eof_reached),5)
+    assert owner.player.paused
+    owner.open_path(video)
+    assert until(lambda:not owner.player.loading and not owner.player.paused and (owner.player.time_pos or 0)>.05)
+    assert not owner._media_loading.get_visible()
+    from unittest.mock import patch, PropertyMock
+    from bora.player import Player
+    with patch.object(Player,'loading',new_callable=PropertyMock,return_value=True):
+        owner._tick();pump(.1)
+        assert owner._media_loading.get_visible() and owner._media_spinner.get_spinning()
+        ImageGrab.grab(xdisplay=os.environ['DISPLAY']).save(shots/'media-loading.png')
+    with patch.object(Player,'buffering',new_callable=PropertyMock,return_value=True):
+        owner._tick();pump(.1)
+        assert owner._media_loading.get_visible() and '버퍼' in owner._media_loading_label.get_label()
+    owner._tick()
+    broken=root/'invalid.mp4';broken.write_text('invalid video fixture')
+    owner.open_path(broken)
+    assert until(lambda:owner.player.load_error)
+    owner._tick();pump(.1)
+    assert not owner._media_loading.get_visible() and '열지 못했습니다' in owner._media_hint.get_label()
+    ImageGrab.grab(xdisplay=os.environ['DISPLAY']).save(shots/'media-error.png')
+    owner.open_path(video)
+    assert until(lambda:not owner.player.loading and not owner.player.load_error and not owner.player.paused)
+    print('actual mpv EOF reopen autoplay/1x and error/retry passed; media delay/cache UI states mocked',flush=True)
     again=NetworkWindow(owner,play,backend=Backend(),store=ServerStore(root/'config'),session=session)
     again.present();pump(.2)
     assert again.browser.calls, (again.closed, session.last_location is not None)
@@ -181,6 +220,7 @@ with tempfile.TemporaryDirectory(prefix='bora-network-ui-') as directory:
         identities.remember_remote(mounted,'nfs://example.test/export',root=True)
         recent_backend.calls[-1][1]((Gio.File.new_for_path(str(mounted)),[]),'');pump(.2)
         assert owner.current_path==reopened and reconnect.closed
+        assert owner._title.get_subtitle()=='네트워크 · /export'
         assert owner.state.resume_for(reopened)==45
         assert owner._notes.doc.path.is_relative_to(root/'DATA')
         assert not (mounted/'최근 영상.md').exists()
@@ -193,6 +233,7 @@ with tempfile.TemporaryDirectory(prefix='bora-network-ui-') as directory:
         target=root/f'lecture-{index:03}.mp4'
         os.link(video,target)
         owner.player.speed=2.0
+        owner.player.paused=True
         picker=NetworkWindow(owner,play,backend=Backend(),store=ServerStore(root/'config'),session=session)
         picker.present();pump(.02)
         if not picker.browser.calls:
@@ -200,7 +241,7 @@ with tempfile.TemporaryDirectory(prefix='bora-network-ui-') as directory:
         picker.browser.calls[-1][1]((Gio.File.new_for_path(str(root)),[(target.name,target.name,False)]),'')
         press(picker.files.get_first_child().get_child(),delay=.03)
         assert until(lambda:owner.current_path==target and (owner.player.duration or 0)>0)
-        assert picker.closed and owner.player.speed==1.0 and owner._chat._path==target
+        assert picker.closed and owner.player.speed==1.0 and not owner.player.paused and owner._chat._path==target
         assert panel.doc.path==target.with_suffix('.md')
         press(panel._view,'x',.02)
         assert until(lambda:panel._text().endswith('x')), (index,repr(panel._text()),owner.get_focus())
@@ -208,6 +249,7 @@ with tempfile.TemporaryDirectory(prefix='bora-network-ui-') as directory:
         picker.destroy()
         if index%20==19:print(f'actual-key file switch and memo: {index+1}/100',flush=True)
     assert until(lambda:not panel.doc.dirty and panel._save_id==0)
+    assert not owner.player.loading and not owner.player.load_error
     assert all(path.read_text()==body for path,body in expected.items())
     ImageGrab.grab(xdisplay=os.environ['DISPLAY']).save(shots/'switch-100.png')
     print('100 actual-key file selections/edits: speed, note/chat context and saved bodies passed',flush=True)

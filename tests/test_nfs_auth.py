@@ -8,7 +8,7 @@ from bora.platform.linux import nfs_service as service
 
 
 @pytest.mark.parametrize('uri,expected',[
-    ('nfs://192.168.0.5/volume1/video','192.168.0.5:/volume1/video'),
+    ('nfs://192.0.2.10/volume1/video','192.0.2.10:/volume1/video'),
     ('nfs://nas.example/강의%20영상','nas.example:/강의 영상'),
     ('nfs://[::1]/export','[::1]:/export')])
 def test_nfs_source(uri,expected):
@@ -44,9 +44,9 @@ def test_only_owner_can_release_and_mount_id_must_match(tmp_path,monkeypatch):
     monkeypatch.setattr(service,'mount_record',records)
     monkeypatch.setattr(service.Mounts,'start_view',lambda *args:(SimpleNamespace(wait=lambda **kw:None),('322','fuse.bora')))
     mounts=service.Mounts();token='a'*32
-    target=mounts.create(':1.100',token,'nfs://192.168.0.5/volume1/video',1000)
+    target=mounts.create(':1.100',token,'nfs://192.0.2.10/volume1/video',1000)
     assert Path(target).parent.parent==tmp_path
-    assert calls[0][0]=='/usr/bin/mount' and calls[0][-2]=='192.168.0.5:/volume1/video'
+    assert calls[0][0]=='/usr/bin/mount' and calls[0][-2]=='192.0.2.10:/volume1/video'
     assert set(('ro','nosuid','nodev','noexec','resvport')).issubset(service.OPTIONS.split(','))
     assert '--' in calls[0] and 'rw' not in service.OPTIONS.split(',')
     with pytest.raises(ValueError):mounts.release(':1.101',token)

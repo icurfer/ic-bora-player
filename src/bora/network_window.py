@@ -5,12 +5,24 @@ from gi.repository import Gio, Gtk, GLib
 from .network import (Server, ServerStore, server_uri, PROTOCOLS, DEFAULT_PORTS,
                       connection_fields, connection_uri)
 from .platform import paths, network
+from .log import redact
+from urllib.parse import urlsplit, unquote
+
+
+def server_label(server):
+    """이전 자동 이름에 주소가 들어 있어도 상시 표시하지 않는다."""
+    name = server.name.strip()
+    return name if name and redact(name) == name else f"{urlsplit(server.uri).scheme.upper()} 서버"
+
+
+def location_label(uri):
+    return unquote(urlsplit(uri).path) or "/"
 
 
 class NetworkWindow(Gtk.Window):
     def __init__(self, parent, open_file, *, backend=None, store=None, session=None, restore=True):
         super().__init__(title='네트워크 서버 열기', transient_for=parent,
-                         default_width=640, default_height=620, destroy_with_parent=True)
+                         default_width=800, default_height=720, destroy_with_parent=True)
         header = Gtk.HeaderBar()
         header.set_title_widget(Gtk.Label(label='네트워크 서버 열기'))
         self.set_titlebar(header)
@@ -46,15 +58,22 @@ class NetworkWindow(Gtk.Window):
             protocol_row.append(widget)
         self.protocol.connect('notify::selected', self._protocol_changed)
         self._protocol_changed()
-        self.address = Gtk.Entry(placeholder_text='192.168.0.5/video 또는 nas.example.com/폴더')
+        self.address = Gtk.Entry(placeholder_text='192.0.2.10/video 또는 nas.example.com/폴더')
         self.address.set_tooltip_text('서버/경로 · 필요하면 사용자@서버/폴더 · 비밀번호는 인증 창에서 입력합니다')
         self.address.update_property([Gtk.AccessibleProperty.LABEL], ['서버 / 경로'])
         self.address.connect('changed', self._address_changed)
         self.address.connect('activate', lambda *_: self.connect_server())
-        root.append(self.name)
-        root.append(protocol_row)
-        root.append(Gtk.Label(label='서버 / 경로', xalign=0))
-        root.append(self.address)
+        form = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        form_scroll = Gtk.ScrolledWindow(min_content_height=80, max_content_height=300,
+                                          propagate_natural_height=True,
+                                          hscrollbar_policy=Gtk.PolicyType.NEVER)
+        form_scroll.set_child(form)
+        self.connection_form = Gtk.Expander(label='연결 정보 · 서버 변경', expanded=True, child=form_scroll)
+        root.append(self.connection_form)
+        form.append(self.name)
+        form.append(protocol_row)
+        form.append(Gtk.Label(label='서버 / 경로', xalign=0))
+        form.append(self.address)
         controls = Gtk.Box(spacing=6)
         self.connect_button = Gtk.Button(label='연결', css_classes=['suggested-action'])
         self.connect_button.connect('clicked', lambda *_: self.connect_server())
@@ -63,14 +82,14 @@ class NetworkWindow(Gtk.Window):
         save.connect('clicked', lambda *_: self.save_server())
         self.cancel_button = Gtk.Button(label='취소', sensitive=False)
         self.cancel_button.connect('clicked', lambda *_: self.cancel())
-        for button in (self.connect_button, save, self.cancel_button):
+        for button in (self.connect_button, save):
             controls.append(button)
-        root.append(controls)
+        form.append(controls)
         self.servers = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         saved_scroll = Gtk.ScrolledWindow(min_content_height=40, max_content_height=100,
                                           propagate_natural_height=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
         saved_scroll.set_child(self.servers)
-        root.append(saved_scroll)
+        form.append(saved_scroll)
         try:
             self.saved = self.store.load()
             self.can_save_servers = True
@@ -88,15 +107,34 @@ class NetworkWindow(Gtk.Window):
         self.refresh.connect('clicked', lambda *_: self._browse(self.current))
         navigation.append(self.up)
         navigation.append(self.refresh)
+        navigation.append(Gtk.Label(hexpand=True))
+        navigation.append(self.cancel_button)
         root.append(navigation)
         self.location = Gtk.Label(xalign=0, ellipsize=3, selectable=True)
         root.append(self.location)
         self.status = Gtk.Label(label=initial, wrap=True, xalign=0)
         root.append(self.status)
         self.files = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
-        scroll = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
-        scroll.set_child(self.files)
-        root.append(scroll)
+        self.files_scroll = Gtk.ScrolledWindow(vexpand=True, min_content_height=160,
+                                              hscrollbar_policy=Gtk.PolicyType.NEVER)
+        self.files_scroll.set_child(self.files)
+        self.content = Gtk.Stack(vexpand=True)
+        self.content.add_named(self.files_scroll, 'files')
+        loading = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
+                          margin_top=16, margin_start=12, margin_end=12)
+        heading = Gtk.Box(spacing=8)
+        self.spinner = Gtk.Spinner()
+        heading.append(self.spinner)
+        heading.append(Gtk.Label(label='폴더 목록을 불러오는 중…', xalign=0))
+        loading.append(heading)
+        for width in (280, 210, 250, 180):
+            row = Gtk.Box(spacing=12, margin_top=8, margin_bottom=8)
+            row.append(Gtk.Image(icon_name='folder-symbolic', css_classes=['dim-label']))
+            bar = Gtk.ProgressBar(fraction=1, width_request=width, opacity=.18, valign=Gtk.Align.CENTER)
+            row.append(bar)
+            loading.append(row)
+        self.content.add_named(loading, 'loading')
+        root.append(self.content)
         self.storage_notice = Gtk.Label(label='메모·편집한 자막은 영상과 같은 서버 폴더에 저장됩니다.\n대화 기록은 이 컴퓨터에 저장됩니다. 읽기 전용 서버에서는 메모를 저장할 수 없습니다.',
                                         xalign=0, wrap=True, css_classes=['dim-label'])
         self.storage_default = self.storage_notice.get_text()
@@ -106,7 +144,7 @@ class NetworkWindow(Gtk.Window):
             self.connect_button.set_sensitive(False)
         if restore and session is not None and getattr(session, 'last_location', None) is not None:
             if session.last_server:
-                self.name.set_text(session.last_server.name)
+                self.name.set_text(server_label(session.last_server))
                 self._load_uri(session.last_server.uri)
             def restore():
                 self._browse(session.last_location)
@@ -159,8 +197,8 @@ class NetworkWindow(Gtk.Window):
             self.servers.append(Gtk.Label(label='저장된 서버가 없습니다.', xalign=0, css_classes=['dim-label']))
         for server in self.saved:
             row = Gtk.Box(spacing=6)
-            choose = Gtk.Button(label=server.name or server.uri, hexpand=True, has_frame=False)
-            choose.set_tooltip_text(server.uri)
+            choose = Gtk.Button(label=server_label(server), hexpand=True, has_frame=False)
+            choose.set_tooltip_text('저장한 서버에 연결')
             choose.connect('clicked', lambda _b, s=server: self._select_server(s))
             remove = Gtk.Button(label='삭제')
             remove.connect('clicked', lambda _b, s=server: self.remove_server(s))
@@ -170,7 +208,7 @@ class NetworkWindow(Gtk.Window):
 
     def _select_server(self, server):
         self._recent_request = None  # 즐겨찾기 선택은 이전 파일 재시도와 별개의 탐색이다.
-        self.name.set_text(server.name)
+        self.name.set_text(server_label(server))
         if self._load_uri(server.uri):
             self.connect_server()
 
@@ -178,7 +216,7 @@ class NetworkWindow(Gtk.Window):
         try:
             uri = self._connection_uri()
             updated = [s for s in self.saved if s.uri != uri]
-            updated.append(Server(self.name.get_text().strip() or uri, uri))
+            updated.append(Server(self.name.get_text().strip() or f'{urlsplit(uri).scheme.upper()} 서버', uri))
             self.store.save(updated)
         except (OSError, ValueError):
             self.status.set_text('저장하지 못했습니다. 주소 형식과 저장 권한을 확인하세요. 비밀번호는 주소에 넣지 마세요.')
@@ -226,6 +264,8 @@ class NetworkWindow(Gtk.Window):
 
     def _set_busy(self, busy):
         self.busy = busy
+        self.content.set_visible_child_name('loading' if busy else 'files')
+        self.spinner.set_spinning(busy)
         for widget in (self.name, self.address, self.protocol):
             widget.set_sensitive(not busy)
         self.port.set_sensitive(not busy and PROTOCOLS[self.protocol.get_selected()] != 'nfs')
@@ -249,13 +289,13 @@ class NetworkWindow(Gtk.Window):
                 return
             self._set_busy(False)
             if result is None:
-                self.status.set_text(message)
+                self.status.set_text(redact(message))
                 return
             self.current, entries = result
             if self.session is not None:
                 self.session.last_location = self.current
             if remember:
-                server = Server(self.name.get_text().strip() or file.get_parse_name(), file.get_uri())
+                server = Server(self.name.get_text().strip() or f'{file.get_uri_scheme().upper()} 서버', file.get_uri())
                 if self.session is not None:
                     self.session.last_server = server
                 if self.can_save_servers and not any(s.uri == server.uri for s in self.saved):
@@ -265,8 +305,10 @@ class NetworkWindow(Gtk.Window):
                         self._saved_rows()
                     except (OSError, ValueError):
                         message = (message + '\n' if message else '') + '연결했지만 서버 정보를 저장하지 못했습니다. 저장 권한을 확인하세요.'
-            self.location.set_text(self.browser.display_location(self.current)
-                                   if hasattr(self.browser, 'display_location') else self.current.get_parse_name())
+            uri = (self.browser.display_location(self.current)
+                   if hasattr(self.browser, 'display_location') else self.current.get_uri())
+            self.location.set_text(f'{server_label(Server(self.name.get_text(), uri))} · {location_label(uri)}')
+            self.connection_form.set_expanded(False)
             if hasattr(self.browser, 'read_only') and self.browser.read_only(self.current):
                 self.storage_notice.set_text('읽기 전용 NFS 연결 · 메모와 핀 이미지는 이 컴퓨터에 저장합니다.\n서버 등록 정보는 종료 후에도 유지됩니다.')
             else:
@@ -283,10 +325,10 @@ class NetworkWindow(Gtk.Window):
                 child = self.current.get_child(name)
                 button.connect('clicked', lambda _b, f=child, d=directory: self._activate(f, d))
                 self.files.append(button)
-            self.status.set_text(message or ('폴더가 비어 있습니다.' if not entries else '폴더를 열거나 재생할 영상을 선택하세요.'))
+            self.status.set_text(redact(message) or ('폴더가 비어 있습니다.' if not entries else '폴더를 열거나 재생할 영상을 선택하세요.'))
             if target is not None:
                 if self.session is not None:
-                    self.session.last_server = Server(file.get_uri(), file.get_uri())
+                    self.session.last_server = Server(f'{file.get_uri_scheme().upper()} 서버', file.get_uri())
                 self.status.set_text('연결됨 · 최근 영상을 열고 있습니다…')
                 target_file = self.current.resolve_relative_path(target)
                 self._activate(target_file, False)
@@ -322,4 +364,5 @@ class NetworkWindow(Gtk.Window):
         self.closed = True
         self.generation += 1
         self.browser.stop()
+        self.spinner.set_spinning(False)
         return False

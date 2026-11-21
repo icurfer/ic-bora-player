@@ -278,3 +278,29 @@ def test_nfs_form_uses_existing_system_port(window):
 def test_custom_port_inclusive_limits(port):
     from bora.network import connection_uri
     assert connection_uri('sftp','nas/share',port)==f'sftp://nas:{port}/share'
+
+
+def test_loading_cancel_privacy_and_connection_form(window):
+    from bora.network_window import server_label
+    w = window
+    uri = 'sftp://viewer@nas.example.com:2222/share'
+    w.address.set_text(uri)
+    w.connect_server()
+    assert w.content.get_visible_child_name() == 'loading' and w.spinner.get_spinning()
+    callback = w.browser.calls[-1][1]
+    w.cancel()
+    assert w.content.get_visible_child_name() == 'files' and not w.spinner.get_spinning()
+    callback((Gio.File.new_for_uri(uri), []), '')
+    assert w.current is None and w.connection_form.get_expanded()
+    w.connect_server()
+    w.browser.calls[-1][1]((Gio.File.new_for_uri(uri), []), '')
+    assert not w.connection_form.get_expanded()
+    assert w.location.get_text() == 'SFTP 서버 · /share'
+    assert 'nas.example.com' not in w.location.get_text()
+    assert w.store.load()[0].uri == uri
+    assert server_label(Server(uri, uri)) == 'SFTP 서버'
+    assert w.servers.get_first_child().get_first_child().get_tooltip_text() == '저장한 서버에 연결'
+    w._browse(w.current)
+    w.browser.calls[-1][1](None, '연결 실패: ' + uri)
+    assert 'nas.example.com' not in w.status.get_text()
+    assert not w.spinner.get_spinning()

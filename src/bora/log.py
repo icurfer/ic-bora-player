@@ -18,6 +18,8 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import re
+import ipaddress
 
 LOGGER_NAME = "bora"
 # mpv 의 로그 등급을 파이썬 등급으로 옮긴다
@@ -33,6 +35,37 @@ _MPV_LEVEL = {
 }
 
 
+_REMOTE = re.compile(r"(?:smb|sftp|ftp|ftps|nfs)://[^\s\"'<>]+|/run/user/\d+/gvfs/[^\s\"'<>]+", re.I)
+_IPV4 = re.compile(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.])")
+_PRIVATE = tuple(ipaddress.ip_network(n) for n in (
+    '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8', '169.254.0.0/16'))
+
+
+def redact(message: str) -> str:
+    """연결용 원본은 유지하고 표시·로그용 문자열에서 주소를 가린다."""
+    def mask_ip(match):
+        try:
+            address = ipaddress.ip_address(match.group())
+        except ValueError:
+            return match.group()
+        return '[비공개 주소]' if any(address in net for net in _PRIVATE) else match.group()
+    return _IPV4.sub(mask_ip, _REMOTE.sub('[원격 주소]', str(message)))
+
+
+class _PrivacyFilter(logging.Filter):
+    def filter(self, record):
+        record.msg, record.args = redact(record.getMessage()), ()
+        if record.exc_info:
+            record.exc_text = redact(logging.Formatter().formatException(record.exc_info))
+        return True
+
+
+class _PrivacyFormatter(logging.Formatter):
+    def format(self, record):
+        # 예외 traceback 안에 포함된 원격 주소도 출력 전에 가린다.
+        return redact(super().format(record))
+
+
 def debug_enabled(argv: list[str] | None = None) -> bool:
     argv = sys.argv if argv is None else argv
     if "--debug" in argv:
@@ -44,12 +77,12 @@ def setup(debug: bool | None = None) -> logging.Logger:
     """루트 로거를 한 번만 설정하고 bora 로거를 돌려준다."""
     if debug is None:
         debug = debug_enabled()
-    logger = logging.getLogger(LOGGER_NAME)
+    logger = get()
     if getattr(logger, "_bora_configured", False):
         return logger
 
     level = logging.DEBUG if debug else logging.WARNING
-    fmt = logging.Formatter("%(asctime)s %(levelname)-5s [%(name)s] %(message)s", "%H:%M:%S")
+    fmt = _PrivacyFormatter("%(asctime)s %(levelname)-5s [%(name)s] %(message)s", "%H:%M:%S")
 
     stream = logging.StreamHandler(sys.stderr)
     stream.setFormatter(fmt)
@@ -117,7 +150,7 @@ def add_log_file(path: str) -> str:
     existing = log_file_path()
     if existing == str(path):
         return existing
-    fmt = logging.Formatter("%(asctime)s %(levelname)-5s [%(name)s] %(message)s", "%H:%M:%S")
+    fmt = _PrivacyFormatter("%(asctime)s %(levelname)-5s [%(name)s] %(message)s", "%H:%M:%S")
     try:
         handler = logging.FileHandler(path, encoding="utf-8")
     except OSError as exc:
@@ -130,7 +163,10 @@ def add_log_file(path: str) -> str:
 
 
 def get(name: str = "") -> logging.Logger:
-    return logging.getLogger(f"{LOGGER_NAME}.{name}" if name else LOGGER_NAME)
+    logger = logging.getLogger(f"{LOGGER_NAME}.{name}" if name else LOGGER_NAME)
+    if not any(isinstance(f, _PrivacyFilter) for f in logger.filters):
+        logger.addFilter(_PrivacyFilter())
+    return logger
 
 
 def mpv_log_handler(level: str, prefix: str, text: str) -> None:

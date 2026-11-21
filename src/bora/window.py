@@ -20,6 +20,7 @@ from gi.repository import Adw, Gdk, GLib, Gtk, Pango, PangoCairo  # noqa: E402
 from .ui import WINDOW_WIDTH, WINDOW_HEIGHT, STUDY_WIDTH, NOTE_INITIAL_HEIGHT, MEDIA_HINT_CSS
 
 from .glarea import MpvGLArea  # noqa: E402
+from . import network
 from . import log as logmod  # noqa: E402
 from .log import get as get_logger  # noqa: E402
 from .player import Player  # noqa: E402
@@ -124,6 +125,16 @@ class BoraWindow(Adw.ApplicationWindow):
         self._media_hint.get_style_context().add_provider(
             hint_style, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         self._video_stack.add_overlay(self._media_hint)
+        self._media_loading = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10,
+                                      halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER,
+                                      can_target=False, visible=False)
+        self._media_spinner = Gtk.Spinner(width_request=32, height_request=32)
+        self._media_loading_label = Gtk.Label(label='영상을 불러오는 중…')
+        self._media_loading_label.get_style_context().add_provider(
+            hint_style, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        self._media_loading.append(self._media_spinner)
+        self._media_loading.append(self._media_loading_label)
+        self._video_stack.add_overlay(self._media_loading)
 
         # 영상 | 메모. 메모를 접으면 영상이 전부 차지한다.
         self._paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL,
@@ -667,7 +678,7 @@ class BoraWindow(Adw.ApplicationWindow):
                                  css_classes=["dim-label"]))
             for item in recent[:8]:
                 btn = Gtk.Button(label=("네트워크 · " if item.uri else "") + item.title, has_frame=False)
-                btn.set_tooltip_text(item.uri or item.path)
+                btn.set_tooltip_text('네트워크 영상 · 선택하면 다시 연결' if item.uri else item.path)
                 btn.connect("clicked", self._on_recent_clicked, item)
                 box.append(btn)
         box.append(Gtk.Separator(margin_top=4))
@@ -1944,9 +1955,16 @@ class BoraWindow(Adw.ApplicationWindow):
         if speed_toast is not None:
             speed_toast.set_title(f'재생 속도 {self.player.speed:g}x')
         self._current = path
+        self._media_loading.set_visible(self.player.loading)
+        self._media_spinner.set_spinning(self.player.loading)
         self._chat.refresh_context()
         self._title.set_title(path.name)
-        self._title.set_subtitle(str(path.parent))
+        remote = network.remote_uri(path)
+        if remote:
+            from urllib.parse import urlsplit, unquote
+            self._title.set_subtitle('네트워크 · ' + str(Path(unquote(urlsplit(remote).path)).parent))
+        else:
+            self._title.set_subtitle(str(path.parent))
         self._sync_controls_enabled()
         self._sync_play_button()
         # 트랙 주입 직후에는 track_list 가 아직 안 채워져 있을 수 있다. 한 박자 뒤에 그린다.
@@ -2044,7 +2062,13 @@ class BoraWindow(Adw.ApplicationWindow):
         duration = self.player.duration
         pos = self.player.time_pos
         message = self._video.error
-        if not message and self._current is not None and self.player.audio_only:
+        if not message and self.player.load_error:
+            message = '영상을 열지 못했습니다\n연결 상태와 파일을 확인한 뒤 다시 열어 주세요'
+        loading = self._current is not None and not message and (self.player.loading or self.player.buffering)
+        self._media_loading.set_visible(bool(loading))
+        self._media_spinner.set_spinning(bool(loading))
+        self._media_loading_label.set_label('버퍼를 채우는 중…' if self.player.buffering else '영상을 불러오는 중…')
+        if not message and not loading and self._current is not None and self.player.audio_only:
             message = "음성 전용 파일을 재생하고 있습니다\n이 파일에는 영상 트랙이 없습니다"
         if message != self._media_hint.get_label():
             self._media_hint.set_label(message)

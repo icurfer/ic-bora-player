@@ -48,6 +48,9 @@ class Player:
         vo='null' 을 준다(대신 스크린샷처럼 렌더 결과가 필요한 기능은 동작하지 않는다).
         """
         self._closed = False
+        self._load_pending = False
+        self._requested_entry = self._active_entry = None
+        self._ready_entry = self._failed_entry = None
         _force_c_numeric()
         debug = debug_enabled() if debug is None else debug
         options = dict(
@@ -61,9 +64,36 @@ class Player:
         # 일반 실행에서도 콜백을 연결해야 메뉴에서 등급을 올린 즉시 진단할 수 있다.
         options.update(log_handler=mpv_log_handler, loglevel="v" if debug else "warn")
         self._mpv = mpv.MPV(**options)
+        self._load_events = self._mpv.event_callback(
+            'start-file', 'playback-restart', 'end-file')(self._on_load_event)
         log.debug("libmpv %s 시작 (debug=%s)", self._mpv.mpv_version, debug)
         self._ctx: mpv.MpvRenderContext | None = None
         self._update_cb: Callable[[], None] | None = None
+
+    def _on_load_event(self, event):
+        # mpv 스레드에서는 상태만 기록한다. UI는 주 스레드에서 읽는다.
+        data = event.as_dict()
+        kind = data['event']
+        if kind == b'start-file':
+            self._active_entry = data['playlist_entry_id']
+        elif kind == b'playback-restart':
+            self._ready_entry = self._active_entry
+        elif kind == b'end-file' and data.get('reason') == b'error':
+            self._failed_entry = data['playlist_entry_id']
+
+    @property
+    def load_error(self) -> bool:
+        return (self._load_pending and self._requested_entry is not None
+                and self._requested_entry == self._failed_entry)
+
+    @property
+    def loading(self) -> bool:
+        return (self._load_pending and not self.load_error
+                and (self._requested_entry is None or self._requested_entry != self._ready_entry))
+
+    @property
+    def buffering(self) -> bool:
+        return self._load_pending and not self.loading and not self.load_error and bool(self._mpv.paused_for_cache)
 
     # ── 렌더 컨텍스트 ────────────────────────────────────────────────────
     def attach_render_context(self, on_update: Callable[[], None]) -> None:
@@ -122,7 +152,17 @@ class Player:
                  Path(path).name, self._mpv.sub_codepage, self._mpv.sub_auto,
                  len(plan.sub_filters) if plan else 0)
         self.speed = 1.0  # 이전 영상 속도가 첫 프레임부터 이어지지 않게 한다.
-        self._mpv.play(str(path))
+        self.paused = False  # 일시정지·EOF keep-open 상태를 새 파일에 넘기지 않는다.
+        self._load_pending = True
+        self._requested_entry = None
+        try:
+            self._mpv.play(str(path))
+            entries = self._mpv.playlist or []
+            self._requested_entry = entries[0]['id'] if entries else None
+            self.paused = False  # EOF keep-open은 loadfile 처리 중 pause를 다시 켤 수 있다.
+        except Exception:
+            self._load_pending = False
+            raise
 
         if plan is not None and plan.tracks:
             self._mpv.wait_until_playing(timeout=10)
@@ -388,6 +428,10 @@ class Player:
         return not self._closed
 
     def close(self) -> None:
+        if self._closed:
+            return
+        self._load_pending = False
+        self._load_events.unregister_mpv_events()
         self._closed = True
         if self._ctx is not None:
             try:
