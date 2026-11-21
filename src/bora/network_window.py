@@ -118,7 +118,7 @@ class NetworkWindow(Gtk.Window):
         self.files_scroll = Gtk.ScrolledWindow(vexpand=True, min_content_height=160,
                                               hscrollbar_policy=Gtk.PolicyType.NEVER)
         self.files_scroll.set_child(self.files)
-        self.content = Gtk.Stack(vexpand=True)
+        self.content = Gtk.Stack(vexpand=True, vhomogeneous=False)
         self.content.add_named(self.files_scroll, 'files')
         loading = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
                           margin_top=16, margin_start=12, margin_end=12)
