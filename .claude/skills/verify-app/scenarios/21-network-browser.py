@@ -39,11 +39,12 @@ with tempfile.TemporaryDirectory(prefix='bora-network-ui-') as directory:
     def pump(seconds=.2):
         end=time.monotonic()+seconds;context=GLib.MainContext.default()
         while time.monotonic()<end:context.iteration(False);time.sleep(.005)
-    def press(widget,key='Return',delay=.2):
-        assert widget.grab_focus()
-        pump(.02)
-        x.XSetInputFocus(display,GdkX11.X11Surface.get_xid(widget.get_root().get_surface()),2,0)
-        x.XSync(display,False);pump(.08) # 닫힌 팝업의 FocusOut/새 창 FocusIn을 먼저 처리한다.
+    def press(widget,key='Return',delay=.2,focus=True):
+        if focus:
+            assert widget.grab_focus()
+            pump(.02)
+            x.XSetInputFocus(display,GdkX11.X11Surface.get_xid(widget.get_root().get_surface()),2,0)
+            x.XSync(display,False);pump(.08) # 닫힌 팝업의 FocusOut/새 창 FocusIn을 먼저 처리한다.
         code=x.XKeysymToKeycode(display,x.XStringToKeysym(key.encode()))
         assert xt.XTestFakeKeyEvent(display,code,1,0);assert xt.XTestFakeKeyEvent(display,code,0,0)
         x.XSync(display,False);pump(delay)
@@ -80,17 +81,40 @@ with tempfile.TemporaryDirectory(prefix='bora-network-ui-') as directory:
     session=Session()
     window=NetworkWindow(owner,play,backend=Backend(),store=ServerStore(root/'config'),session=session)
     window.present();pump(.3)
-    for scheme in ('smb','sftp','ftp','nfs'):
-        window.address.set_text(f'{scheme}://example.test/share')
+    shots=Path(os.environ.get('BORA_REVIEW_SHOTS','/data/github-icurfer/.bora-worktrees/network-shots'))
+    shots.mkdir(parents=True,exist_ok=True)
+    for index,scheme in enumerate(('smb','sftp','ftp','nfs')):
+        calls_before = len(window.browser.calls)
+        press(window.protocol,'space')
+        press(window.protocol,'Home',focus=False)
+        for _ in range(index):press(window.protocol,'Down',delay=.02,focus=False)
+        press(window.protocol,'Return',focus=False)
+        assert window.protocol.get_selected()==index
+        default={'smb':'445','sftp':'22','ftp':'21','nfs':'자동'}[scheme]
+        assert window.port.get_text()==default and len(window.browser.calls)==calls_before
+        window.address.set_text('example.test/share')
+        if scheme!='nfs':
+            custom={'smb':'1445','sftp':'2222','ftp':'2121'}[scheme]
+            window.port.set_text('')
+            for number,digit in enumerate(custom):press(window.port,digit,delay=.01,focus=number==0)
+            assert window.port.get_text()==custom
         press(window.connect_button);assert window.busy and window.browser.calls[-1][0].startswith(scheme+':')
         if scheme=='nfs':assert '관리자 인증' in window.status.get_text()
+        else:assert ':'+custom+'/' in window.browser.calls[-1][0]
         press(window.cancel_button);assert not window.busy
+        if scheme=='sftp':
+            window.name.set_text('테스트 SFTP');press(window.save_button)
+            assert window.store.load()[0].uri=='sftp://example.test:2222/share'
+            window.port.set_text('2022')
+            press(window.servers.get_first_child().get_first_child())
+            assert window.port.get_text()=='2222' and window.address.get_text()=='example.test/share'
+            press(window.cancel_button);window.name.set_text('');pump(.1)
+            ImageGrab.grab(xdisplay=os.environ['DISPLAY']).save(shots/'sftp-custom.png')
+    print('actual-key protocol dropdown/default ports/custom ports/favorite restore passed; server mocked',flush=True)
     press(window.connect_button)
     window.browser.calls[-1][1]((Gio.File.new_for_path(str(root)),[(video.name,video.name,False)]),'');pump()
     assert '읽기 전용 NFS' in window.storage_notice.get_text() and not window.up.get_sensitive()
     assert window.location.get_text()=='nfs://example.test/share'
-    shots=Path(os.environ.get('BORA_REVIEW_SHOTS','/data/github-icurfer/.bora-worktrees/network-shots'))
-    shots.mkdir(parents=True,exist_ok=True)
     for width,height,name in ((640,620,'normal'),(480,580,'narrow')):
         window.set_default_size(width,height);pump()
         assert window.files.get_allocated_height()>0
@@ -101,7 +125,7 @@ with tempfile.TemporaryDirectory(prefix='bora-network-ui-') as directory:
     again.present();pump(.2)
     assert again.browser.calls, (again.closed, session.last_location is not None)
     assert again.browser.calls[-1][0]==root.as_uri()
-    assert again.address.get_text()=='nfs://example.test/share'
+    assert again.address.get_text()=='example.test/share' and again.port.get_text()=='자동'
     again.browser.calls[-1][1]((Gio.File.new_for_path(str(root)),[(second.name,second.name,False)]),'')
     press(again.files.get_first_child().get_child());pump(.4)
     assert owner.current_path==second and again.closed

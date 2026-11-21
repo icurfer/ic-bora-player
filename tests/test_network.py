@@ -215,3 +215,66 @@ def test_saved_server_after_recent_cancel_browses_instead_of_opening_old_target(
     w._select_server(Server('NAS','nfs://nas/export'))
     w.browser.calls[-1][1]((Gio.File.new_for_path(str(tmp_path)),[]),'')
     assert w.opened==[] and not w.closed and w.store.load()[0].name=='NAS'
+
+
+@pytest.mark.parametrize('scheme,default,custom',[
+    ('smb','445','1445'),('sftp','22','2222'),('ftp','21','2121')])
+def test_connection_form_default_and_custom_port(window,scheme,default,custom):
+    from bora.network import PROTOCOLS
+    w=window;w.protocol.set_selected(PROTOCOLS.index(scheme))
+    assert w.port.get_text()==default and w.port.get_sensitive()
+    assert w.browser.calls==[]
+    w.address.set_text('nas/강의 폴더')
+    assert w._connection_uri()==server_uri(f'{scheme}://nas/강의 폴더')
+    w.port.set_text(custom);w.connect_server()
+    assert w.browser.calls[-1][0]==Gio.File.new_for_uri(server_uri(f'{scheme}://nas:{custom}/강의 폴더')).get_uri()
+    assert not w.protocol.get_sensitive() and not w.port.get_sensitive()
+    w.cancel();assert w.port.get_text()==custom and w.port.get_sensitive()
+    w.save_server();saved=w.store.load()[0]
+    w.protocol.set_selected(0 if scheme!='smb' else 1)
+    w._select_server(saved)
+    assert w.port.get_text()==custom and w.address.get_text()=='nas/강의 폴더'
+    assert w._connection_uri()==saved.uri
+
+
+@pytest.mark.parametrize('port',['','0','65536','-1','22.5','abc','２２'])
+def test_invalid_form_port_never_connects_or_saves(window,port):
+    w=window;w.address.set_text('nas/share');w.port.set_text(port)
+    w.connect_server();w.save_server()
+    assert w.browser.calls==[] and not w.store.path.exists()
+
+
+@pytest.mark.parametrize('uri',[
+    'sftp://user@nas:22/강의 폴더','ftp://user@nas:2121/100%2520/%23%3F',
+    'sftp://u@[2001:db8::1]:2222/폴더','smb://nas:445/share'])
+def test_existing_uri_restore_preserves_explicit_ports_and_identity(window,uri):
+    w=window;expected=server_uri(uri)
+    w.address.set_text(uri)
+    assert '://' not in w.address.get_text() and w._connection_uri()==expected
+    w.save_server();assert w.store.load()[0].uri==expected
+    w._select_server(w.saved[0]);assert w._connection_uri()==expected
+
+
+def test_path_reserved_characters_and_ipv6_port_edit(window):
+    from bora.network import connection_uri
+    assert connection_uri('sftp','u@[::1]/강의 #1? 100%20','2222')=='sftp://u@[::1]:2222/%EA%B0%95%EC%9D%98%20%231%3F%20100%2520'
+    w=window;w.address.set_text('sftp://u@[::1]/100%2520')
+    w.port.set_text('2222')
+    assert w._connection_uri()=='sftp://u@[::1]:2222/100%2520'
+
+
+def test_nfs_form_uses_existing_system_port(window):
+    from bora.network import PROTOCOLS
+    w=window;w.protocol.set_selected(PROTOCOLS.index('nfs'))
+    assert w.port.get_text()=='자동' and not w.port.get_sensitive()
+    w.address.set_text('nas/export');w.connect_server()
+    assert w.browser.calls[-1][0]=='nfs://nas/export'
+    w.cancel();assert not w.port.get_sensitive()
+    w.address.set_text('nfs://nas:2049/export');w.connect_server()
+    assert len(w.browser.calls)==1 and '자동' in w.port.get_tooltip_text()
+
+
+@pytest.mark.parametrize('port',['1','65535'])
+def test_custom_port_inclusive_limits(port):
+    from bora.network import connection_uri
+    assert connection_uri('sftp','nas/share',port)==f'sftp://nas:{port}/share'

@@ -2,7 +2,8 @@
 import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gio, Gtk, GLib
-from .network import Server, ServerStore, server_uri
+from .network import (Server, ServerStore, server_uri, PROTOCOLS, DEFAULT_PORTS,
+                      connection_fields, connection_uri)
 from .platform import paths, network
 
 
@@ -22,6 +23,9 @@ class NetworkWindow(Gtk.Window):
         self.busy = False
         self.generation = 0
         self._recent_request = None
+        self._loading_fields = False
+        self._source_uri = None
+        self._source_fields = None
         self.connect('close-request', self._close)
         self.connect('unrealize', self._close)
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10,
@@ -30,15 +34,32 @@ class NetworkWindow(Gtk.Window):
         root.append(Gtk.Label(label='SMB · SFTP · FTP · NFS 서버에서 영상 열기', xalign=0, css_classes=['title-3']))
         self.name = Gtk.Entry(placeholder_text='서버 이름 (선택)')
         self.name.set_tooltip_text('즐겨찾기에 표시할 서버 이름')
-        self.address = Gtk.Entry(placeholder_text='smb://서버/공유 · sftp://사용자@서버:포트/폴더 · ftp://서버/폴더 · nfs://서버/경로')
-        self.address.set_tooltip_text('서버 주소 · 비밀번호는 연결할 때 입력합니다')
+        self.protocol = Gtk.DropDown.new_from_strings([s.upper() for s in PROTOCOLS])
+        self.protocol.set_tooltip_text('연결 방식')
+        self.protocol.update_property([Gtk.AccessibleProperty.LABEL], ['연결 방식'])
+        self.port = Gtk.Entry(width_chars=6, max_width_chars=7, input_purpose=Gtk.InputPurpose.DIGITS)
+        self.port.update_property([Gtk.AccessibleProperty.LABEL], ['포트'])
+        self.port.connect('activate', lambda *_: self.connect_server())
+        protocol_row = Gtk.Box(spacing=8)
+        for widget in (Gtk.Label(label='연결 방식'), self.protocol,
+                       Gtk.Label(hexpand=True), Gtk.Label(label='포트'), self.port):
+            protocol_row.append(widget)
+        self.protocol.connect('notify::selected', self._protocol_changed)
+        self._protocol_changed()
+        self.address = Gtk.Entry(placeholder_text='192.168.0.5/video 또는 nas.example.com/폴더')
+        self.address.set_tooltip_text('서버/경로 · 필요하면 사용자@서버/폴더 · 비밀번호는 인증 창에서 입력합니다')
+        self.address.update_property([Gtk.AccessibleProperty.LABEL], ['서버 / 경로'])
+        self.address.connect('changed', self._address_changed)
         self.address.connect('activate', lambda *_: self.connect_server())
         root.append(self.name)
+        root.append(protocol_row)
+        root.append(Gtk.Label(label='서버 / 경로', xalign=0))
         root.append(self.address)
         controls = Gtk.Box(spacing=6)
         self.connect_button = Gtk.Button(label='연결', css_classes=['suggested-action'])
         self.connect_button.connect('clicked', lambda *_: self.connect_server())
         save = Gtk.Button(label='서버 저장')
+        self.save_button = save
         save.connect('clicked', lambda *_: self.save_server())
         self.cancel_button = Gtk.Button(label='취소', sensitive=False)
         self.cancel_button.connect('clicked', lambda *_: self.cancel())
@@ -86,11 +107,50 @@ class NetworkWindow(Gtk.Window):
         if restore and session is not None and getattr(session, 'last_location', None) is not None:
             if session.last_server:
                 self.name.set_text(session.last_server.name)
-                self.address.set_text(session.last_server.uri)
+                self._load_uri(session.last_server.uri)
             def restore():
                 self._browse(session.last_location)
                 return False
             GLib.timeout_add(1, restore)
+
+    def _protocol_changed(self, *_):
+        if self._loading_fields:
+            return
+        default = DEFAULT_PORTS[PROTOCOLS[self.protocol.get_selected()]]
+        self.port.set_text(str(default) if default else '자동')
+        self.port.set_sensitive(default is not None)
+        self.port.set_tooltip_text('기본 포트 · 직접 변경할 수 있습니다' if default else 'NFS 포트는 시스템이 자동으로 정합니다')
+
+    def _fields(self):
+        return PROTOCOLS[self.protocol.get_selected()], self.address.get_text(), self.port.get_text()
+
+    def _load_uri(self, uri):
+        try:
+            uri = server_uri(uri)
+            scheme, address, port = connection_fields(uri)
+        except ValueError as error:
+            self.status.set_text(str(error))
+            return False
+        self._loading_fields = True
+        try:
+            self.protocol.set_selected(PROTOCOLS.index(scheme))
+            self.address.set_text(address)
+            self.port.set_text(port)
+            self.port.set_sensitive(scheme != 'nfs')
+            self.port.set_tooltip_text('NFS 포트는 시스템이 자동으로 정합니다' if scheme == 'nfs' else '포트 · 직접 변경할 수 있습니다')
+        finally:
+            self._loading_fields = False
+        self._source_uri, self._source_fields = uri, self._fields()
+        return True
+
+    def _address_changed(self, *_):
+        if not self._loading_fields and '://' in self.address.get_text():
+            self._load_uri(self.address.get_text())
+
+    def _connection_uri(self):
+        if self._source_uri is not None and self._fields() == self._source_fields:
+            return self._source_uri  # 명시적 기본 포트도 기존 영상 식별 주소를 유지한다.
+        return connection_uri(*self._fields())
 
     def _saved_rows(self):
         while self.servers.get_first_child():
@@ -111,12 +171,12 @@ class NetworkWindow(Gtk.Window):
     def _select_server(self, server):
         self._recent_request = None  # 즐겨찾기 선택은 이전 파일 재시도와 별개의 탐색이다.
         self.name.set_text(server.name)
-        self.address.set_text(server.uri)
-        self.connect_server()
+        if self._load_uri(server.uri):
+            self.connect_server()
 
     def save_server(self):
         try:
-            uri = server_uri(self.address.get_text())
+            uri = self._connection_uri()
             updated = [s for s in self.saved if s.uri != uri]
             updated.append(Server(self.name.get_text().strip() or uri, uri))
             self.store.save(updated)
@@ -139,7 +199,7 @@ class NetworkWindow(Gtk.Window):
 
     def connect_server(self):
         try:
-            file = Gio.File.new_for_uri(server_uri(self.address.get_text()))
+            file = Gio.File.new_for_uri(self._connection_uri())
         except ValueError as error:
             self.status.set_text(str(error))
             return
@@ -160,11 +220,15 @@ class NetworkWindow(Gtk.Window):
             self.status.set_text('최근 파일의 연결 폴더를 확인할 수 없습니다. 저장된 서버에서 영상을 다시 선택하세요.')
             return
         self._recent_request = (uri, connection)
-        self.address.set_text(connection)
+        if not self._load_uri(connection):
+            return
         self._browse(Gio.File.new_for_uri(connection), target=relative)
 
     def _set_busy(self, busy):
         self.busy = busy
+        for widget in (self.name, self.address, self.protocol):
+            widget.set_sensitive(not busy)
+        self.port.set_sensitive(not busy and PROTOCOLS[self.protocol.get_selected()] != 'nfs')
         self.connect_button.set_sensitive(not busy)
         self.cancel_button.set_sensitive(busy)
         self.files.set_sensitive(not busy)

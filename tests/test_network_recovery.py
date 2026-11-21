@@ -55,7 +55,8 @@ def test_reopen_browser_restores_folder_and_remembers_server(tmp_path):
     backend=Backend();again=NetworkWindow(parent,lambda _:True,backend=backend,store=store,session=session)
     pump()
     assert backend.calls==['sftp://user@host/share/folder']
-    assert again.address.get_text()=='sftp://user@host/share' and len(store.load())==1
+    assert again.address.get_text()=='user@host/share' and again.port.get_text()=='22'
+    assert again._connection_uri()=='sftp://user@host/share' and len(store.load())==1
     again.remove_server(again.saved[0]);again.close()
     # 현재 연결 위치 복원은 삭제한 즐겨찾기를 몰래 재등록하지 않는다.
     third=NetworkWindow(parent,lambda _:True,backend=Backend(),store=store,session=session);pump()

@@ -7,6 +7,7 @@ import tempfile
 from urllib.parse import urlsplit, urlunsplit, quote, unquote
 
 PROTOCOLS = ('smb', 'sftp', 'ftp', 'nfs')
+DEFAULT_PORTS = {'smb': 445, 'sftp': 22, 'ftp': 21, 'nfs': None}
 _remote_roots = {}
 _remote_files = {}
 
@@ -91,6 +92,38 @@ def server_uri(value):
         return urlunsplit((parsed.scheme, parsed.netloc, quote(path or '/', safe='/'), '', ''))
     except ValueError:
         raise ValueError('smb://서버/공유, sftp://사용자@서버:포트/폴더 ftp://사용자@서버/폴더 또는 nfs://서버/내보낸경로 형식으로 입력하세요. 비밀번호는 주소에 넣지 마세요.') from None
+
+
+def connection_fields(uri):
+    """기존 URI를 프로토콜·서버/경로·포트 입력으로 나눈다."""
+    parsed = urlsplit(server_uri(uri))
+    if parsed.scheme == 'nfs' and parsed.port is not None:
+        raise ValueError('NFS 포트는 시스템이 자동으로 정합니다. 주소에서 포트를 빼 주세요.')
+    host = f'[{parsed.hostname}]' if ':' in parsed.hostname else parsed.hostname
+    if parsed.username is not None:
+        host = parsed.username + '@' + host
+    port = parsed.port or DEFAULT_PORTS[parsed.scheme]
+    return parsed.scheme, host + unquote(parsed.path), str(port) if port else '자동'
+
+
+def connection_uri(scheme, address, port):
+    """방식 선택과 서버/경로 입력을 비밀번호 없는 URI로 만든다."""
+    if scheme not in PROTOCOLS:
+        raise ValueError('연결 방식을 선택하세요.')
+    if '://' in address:
+        raise ValueError('서버/경로에는 연결 방식을 제외하고 입력하세요.')
+    authority, _, path = address.strip().partition('/')
+    base = urlsplit(server_uri(f'{scheme}://{authority}/'))
+    if base.port is not None:
+        raise ValueError('포트는 서버 주소 뒤가 아닌 포트 칸에 입력하세요.')
+    suffix = ''
+    if scheme != 'nfs':
+        port = port.strip()
+        if not port.isascii() or not port.isdigit() or not 1 <= int(port) <= 65535:
+            raise ValueError('포트는 1부터 65535 사이의 숫자로 입력하세요.')
+        if int(port) != DEFAULT_PORTS[scheme]:
+            suffix = ':' + str(int(port))
+    return server_uri(f'{scheme}://{authority}{suffix}/' + quote(path, safe='/'))
 
 
 @dataclass(frozen=True)
